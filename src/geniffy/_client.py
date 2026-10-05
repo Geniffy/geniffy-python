@@ -15,6 +15,7 @@ import json
 import mimetypes
 import os
 import random
+import re
 import time
 from datetime import date, datetime
 from typing import IO, Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
@@ -35,14 +36,22 @@ Labels = Dict[str, str]
 LabelFilter = Dict[str, Union[str, List[str]]]
 
 
-def _settings(api_key: Optional[str], base_url: Optional[str]) -> Tuple[str, str, Dict[str, str]]:
+_INTEGRATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$")
+
+
+def _settings(api_key: Optional[str], base_url: Optional[str],
+              integration: Optional[str] = None) -> Tuple[str, str, Dict[str, str]]:
     key = (api_key or os.environ.get("GENIFFY_API_KEY") or "").strip()
     if not key:
         raise GeniffyError("No API key. Pass api_key=... or set GENIFFY_API_KEY. "
                            "Make one in the Geniffy app under Connect, API keys.")
     url = (base_url or os.environ.get("GENIFFY_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-    headers = {"Authorization": f"Bearer {key}", "User-Agent": f"geniffy-python/{__version__}",
-               "Accept": "application/json"}
+    agent = f"geniffy-python/{__version__}"
+    if integration:
+        if not _INTEGRATION.match(integration):
+            raise ValueError("integration is a name and a version, such as \"langchain-geniffy/0.1.0\".")
+        agent = f"{agent} {integration}"          # the Requests page shows which integration made each call
+    headers = {"Authorization": f"Bearer {key}", "User-Agent": agent, "Accept": "application/json"}
     return key, url, headers
 
 
@@ -212,8 +221,8 @@ class Geniffy:
 
     def __init__(self, api_key: Optional[str] = None, *, base_url: Optional[str] = None, timeout: float = 60.0,
                  max_retries: int = 2, http_client: Optional[httpx.Client] = None,
-                 space: Union[str, int, None] = None):
-        _, url, headers = _settings(api_key, base_url)
+                 space: Union[str, int, None] = None, integration: Optional[str] = None):
+        _, url, headers = _settings(api_key, base_url, integration)
         self.max_retries = max(0, int(max_retries))
         self._http = http_client or httpx.Client(timeout=timeout)
         self.space_id = "" if space is None else _space_name(space, "space=")
@@ -222,7 +231,7 @@ class Geniffy:
         if self.space_id:
             headers = {**headers, "X-Geniffy-Space": self.space_id}
         self._url, self._headers = url, headers
-        self._api_key, self._base_url, self._timeout = api_key, base_url, timeout
+        self._api_key, self._base_url, self._timeout, self._integration = api_key, base_url, timeout, integration
         self.memories = Memories(self)
         self.sources = Sources(self)
         self.keys = Keys(self)
@@ -234,7 +243,8 @@ class Geniffy:
         them: up to 128 letters, digits, dots, dashes or underscores, so an id rather than an email. A
         blank one (or None) is refused rather than read as your own memory."""
         return Geniffy(self._api_key, base_url=self._base_url, timeout=self._timeout,
-                       max_retries=self.max_retries, http_client=self._http, space=_space_name(space))
+                       max_retries=self.max_retries, http_client=self._http, space=_space_name(space),
+                       integration=self._integration)
 
     def _request(self, method: str, path: str, **kw: Any) -> Dict[str, Any]:
         for attempt in range(self.max_retries + 1):
@@ -559,15 +569,15 @@ class AsyncGeniffy:
 
     def __init__(self, api_key: Optional[str] = None, *, base_url: Optional[str] = None, timeout: float = 60.0,
                  max_retries: int = 2, http_client: Optional[httpx.AsyncClient] = None,
-                 space: Union[str, int, None] = None):
-        _, url, headers = _settings(api_key, base_url)
+                 space: Union[str, int, None] = None, integration: Optional[str] = None):
+        _, url, headers = _settings(api_key, base_url, integration)
         self.max_retries = max(0, int(max_retries))
         self._http = http_client or httpx.AsyncClient(timeout=timeout)
         self.space_id = "" if space is None else _space_name(space, "space=")
         if self.space_id:
             headers = {**headers, "X-Geniffy-Space": self.space_id}
         self._url, self._headers = url, headers
-        self._api_key, self._base_url, self._timeout = api_key, base_url, timeout
+        self._api_key, self._base_url, self._timeout, self._integration = api_key, base_url, timeout, integration
         self.memories = AsyncMemories(self)
         self.sources = AsyncSources(self)
         self.keys = AsyncKeys(self)
@@ -577,7 +587,8 @@ class AsyncGeniffy:
         """The same client, pointed at one of YOUR users. Shares this client's connection pool. A blank
         space (or None) is refused rather than read as your own memory."""
         return AsyncGeniffy(self._api_key, base_url=self._base_url, timeout=self._timeout,
-                            max_retries=self.max_retries, http_client=self._http, space=_space_name(space))
+                            max_retries=self.max_retries, http_client=self._http, space=_space_name(space),
+                            integration=self._integration)
 
     async def _request(self, method: str, path: str, **kw: Any) -> Dict[str, Any]:
         for attempt in range(self.max_retries + 1):

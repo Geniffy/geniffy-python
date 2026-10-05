@@ -634,6 +634,33 @@ def test_a_failed_calls_error_carries_the_id_geniffy_gave_it():
 
 
 
+def test_an_integration_names_itself_after_the_sdk():
+    """A package built on the SDK passes its own name, so the Requests page shows which one made each call."""
+    seen = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        seen.append(r.headers.get("user-agent"))
+        return httpx.Response(200, json={"name": "x", "memory": "personal"})
+
+    g = make(handler, integration="langchain-geniffy/0.1.0")
+    g.me()
+    g.space("customer_1042").me()
+    assert seen == [f"geniffy-python/{geniffy.__version__} langchain-geniffy/0.1.0"] * 2, "kept by space() too"
+    make(handler).me()
+    assert seen[-1] == f"geniffy-python/{geniffy.__version__}"
+    for bad in ("langchain geniffy", "no-version", "a/b c", "x" * 70 + "/1"):
+        with pytest.raises(ValueError, match="a name and a version"):
+            make(handler, integration=bad)
+
+    async def run():
+        a = AsyncGeniffy(api_key=KEY, integration="openai-agents-geniffy/0.1.0",
+                         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        await a.space("u1").me()
+        assert seen[-1].endswith(" openai-agents-geniffy/0.1.0")
+        await a.close()
+    asyncio.run(run())
+
+
 def test_export_is_the_users_own_copy():
     seen = []
 
