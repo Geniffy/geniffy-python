@@ -363,7 +363,8 @@ class Memories:
 
     def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None,
                  external_id: Optional[str] = None, labels: Optional[Labels] = None) -> Source:
-        """Add a PDF or Word (.docx) file: a path, bytes, or a file opened with 'rb'. Under an external_id,
+        """Add a file: PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), or text (.txt, .md, .csv, .html),
+        as a path, bytes, or a file opened with 'rb'. Under an external_id,
         sending a new version updates the source that id names."""
         files, data = _multipart(file, filename, title, external_id, labels)
         return Source.from_json(self._c._request("POST", "/v1/memories/file", files=files, data=data)["source"])
