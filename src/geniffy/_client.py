@@ -24,7 +24,7 @@ import httpx
 from ._errors import APIConnectionError, GeniffyError, NotFoundError, from_response
 from ._types import Answer, Key, Kind, Memory, MemoryDetail, MemoryPage, Source, SourcePage
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://api.geniffy.com"
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 FileInput = Union[str, "os.PathLike[str]", bytes, IO[bytes]]
