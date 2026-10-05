@@ -7,6 +7,8 @@
 - `external_id=` on `memories.add` and `add_file`: your own id for a source. Sent again under the same id,
   the source is updated rather than added twice, and only what changed is learned. `sources.get` and
   `sources.delete` take `external_id=` too. `Source.external_id` says which id a source was added under.
+- `sections`: the sections profiles are grouped into. `client.sections.create(name, keywords=...)` adds one
+  for every one of your users; on `client.space(id)`, for that user only. `list()` and `delete(id)` too.
 - `keys` on a client bound to one of your users: `client.space(id).keys.create(name=..., rpm=...)` makes a key
   limited to that user (it reads and writes their memory and nothing else), and `keys.list()` and
   `keys.revoke(id)` manage them. Needs the API with `/v1/keys` (October 2026).

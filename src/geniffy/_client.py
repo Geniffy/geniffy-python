@@ -195,6 +195,7 @@ class Geniffy:
         self.memories = Memories(self)
         self.sources = Sources(self)
         self.keys = Keys(self)
+        self.sections = Sections(self)
 
     def space(self, space: Union[str, int]) -> "Geniffy":
         """The same client, pointed at one of YOUR users. It shares this client's connection pool,
@@ -380,6 +381,47 @@ class Keys:
         self._c._request("DELETE", f"/v1/keys/{int(key_id)}")
 
 
+def _section_body(name: str, description: str, keywords: Optional[List[str]], topics: Optional[List[str]]) -> Dict[str, Any]:
+    return {"name": name, "description": description, "keywords": list(keywords or []), "topics": list(topics or [])}
+
+
+class Sections:
+    """The sections profiles are grouped into. On the plain client, for every one of your users; on a client
+    bound to one user (client.space(id).sections), for that user only. A memory goes in a section when one of
+    its keywords appears in it, or its topic is one of the section's."""
+
+    def __init__(self, client: Geniffy):
+        self._c = client
+
+    def list(self) -> List[Dict[str, Any]]:
+        """The sections, the app's own first, then the built-in ones; each says whom it applies to."""
+        return list(self._c._request("GET", "/v1/profile/sections").get("sections") or [])
+
+    def create(self, name: str, *, keywords: Optional[List[str]] = None, topics: Optional[List[str]] = None,
+               description: str = "") -> Dict[str, Any]:
+        """Add a section (or, under a name it already has, update it). Profiles regroup within a minute or so."""
+        return self._c._request("POST", "/v1/profile/sections", json=_section_body(name, description, keywords, topics))
+
+    def delete(self, section_id: int) -> None:
+        self._c._request("DELETE", f"/v1/profile/sections/{int(section_id)}")
+
+
+class AsyncSections:
+    def __init__(self, client: AsyncGeniffy):
+        self._c = client
+
+    async def list(self) -> List[Dict[str, Any]]:
+        return list((await self._c._request("GET", "/v1/profile/sections")).get("sections") or [])
+
+    async def create(self, name: str, *, keywords: Optional[List[str]] = None, topics: Optional[List[str]] = None,
+                     description: str = "") -> Dict[str, Any]:
+        return await self._c._request("POST", "/v1/profile/sections",
+                                      json=_section_body(name, description, keywords, topics))
+
+    async def delete(self, section_id: int) -> None:
+        await self._c._request("DELETE", f"/v1/profile/sections/{int(section_id)}")
+
+
 class AsyncKeys:
     def __init__(self, client: AsyncGeniffy):
         self._c = client
@@ -453,6 +495,7 @@ class AsyncGeniffy:
         self.memories = AsyncMemories(self)
         self.sources = AsyncSources(self)
         self.keys = AsyncKeys(self)
+        self.sections = AsyncSections(self)
 
     def space(self, space: Union[str, int]) -> "AsyncGeniffy":
         """The same client, pointed at one of YOUR users. Shares this client's connection pool. A blank

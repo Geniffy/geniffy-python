@@ -168,6 +168,37 @@ def test_a_key_limited_to_one_user_is_made_listed_and_revoked_on_that_users_clie
     asyncio.run(main())
 
 
+def test_profile_sections_for_every_user_or_one():
+    sent = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, r.headers.get("x-geniffy-space"), r.content))
+        if r.method == "GET":
+            return httpx.Response(200, json={"sections": [{"id": 300, "name": "billing", "applies_to": "every user"}]})
+        if r.method == "POST":
+            return httpx.Response(201, json={"id": 300, "name": "billing", "applies_to": "every user"})
+        return httpx.Response(200, json={"id": 300, "deleted": True})
+
+    g = make(handler)
+    made = g.sections.create("Billing", keywords=["invoice", "refund"], description="Plans and invoices")
+    assert made["applies_to"] == "every user" and sent[-1][2] is None, "the plain client: every user"
+    assert json.loads(sent[-1][3]) == {"name": "Billing", "description": "Plans and invoices",
+                                       "keywords": ["invoice", "refund"], "topics": []}
+    g.space("customer_42").sections.create("Allergies", topics=["diet"])
+    assert sent[-1][:3] == ("POST", "/v1/profile/sections", "customer_42"), "a bound client: that user only"
+    assert g.sections.list()[0]["name"] == "billing"
+    g.sections.delete(300)
+    assert sent[-1][:2] == ("DELETE", "/v1/profile/sections/300")
+
+    a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    async def main():
+        assert (await a.sections.create("Billing", keywords=["invoice"]))["id"] == 300
+        assert len(await a.sections.list()) == 1
+        await a.sections.delete(300)
+    asyncio.run(main())
+
+
 def test_listing_pages_through_every_memory_and_opening_one():
     def handler(r):
         if r.url.path == "/v1/memories":
