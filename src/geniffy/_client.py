@@ -15,6 +15,7 @@ import mimetypes
 import os
 import random
 import time
+from datetime import date, datetime
 from typing import IO, Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 from urllib.parse import quote
 
@@ -91,6 +92,22 @@ def _note_or_link(text: Optional[str], url: Optional[str], title: Optional[str])
     body: Dict[str, Any] = {"text": text} if text is not None else {"url": url}
     if title:
         body["title"] = title
+    return body
+
+
+SaidAt = Union[str, datetime, date, None]
+
+
+def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[Dict[str, Any]]],
+              title: Optional[str], said_at: SaidAt) -> Dict[str, Any]:
+    body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
+    if messages is not None and title:
+        body["title"] = title
+    if said_at is not None:
+        if url is not None:
+            raise ValueError("said_at goes with a note or a conversation: a web page is read as it is today.")
+        # a datetime with no time zone is read as UTC by the API
+        body["said_at"] = said_at.isoformat() if isinstance(said_at, (datetime, date)) else str(said_at)
     return body
 
 
@@ -249,15 +266,17 @@ class Memories:
         self._c = client
 
     def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
-            messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None) -> Source:
+            messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
+            said_at: SaidAt = None) -> Source:
         """Add a note (text), a web page (url=...) that Geniffy reads once, or a conversation
         (messages=[{"role": ..., "content": ...}]) as your framework already holds it: content as a
         string, or as Anthropic's blocks or OpenAI's parts, or parts as Gemini holds them. Only text is
         kept, system and developer messages are skipped, and who said what is kept, so the user's words
-        become facts about the user. Learning takes a moment: see sources.wait()."""
-        body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
-        if messages is not None and title:
-            body["title"] = title
+        become facts about the user. Learning takes a moment: see sources.wait().
+
+        said_at: when a note or conversation from the past was said (a datetime, a date, or an ISO 8601
+        string), so what it teaches is dated by it. Left out, now."""
+        body = _add_body(text, url, messages, title, said_at)
         return Source.from_json(self._c._request("POST", "/v1/memories", json=body)["source"])
 
     def add_many(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -429,10 +448,9 @@ class AsyncMemories:
         self._c = client
 
     async def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
-                  messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None) -> Source:
-        body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
-        if messages is not None and title:
-            body["title"] = title
+                  messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
+                  said_at: SaidAt = None) -> Source:
+        body = _add_body(text, url, messages, title, said_at)
         out = await self._c._request("POST", "/v1/memories", json=body)
         return Source.from_json(out["source"])
 

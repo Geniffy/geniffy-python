@@ -61,6 +61,27 @@ def test_adding_a_note_a_link_and_a_file():
     assert b'name="title"' in body
 
 
+def test_something_said_in_the_past_carries_its_date():
+    from datetime import date, datetime, timezone
+    sent = []
+    g = make(lambda r: sent.append(json.loads(r.content)) or httpx.Response(201, json={"source": SOURCE}))
+    g.memories.add(messages=[{"role": "user", "content": "We moved the launch to May."}],
+                   said_at=datetime(2025, 3, 4, 9, 30, tzinfo=timezone.utc))
+    assert sent[0]["said_at"] == "2025-03-04T09:30:00+00:00"
+    g.memories.add("Priya signs the renewal.", said_at=date(2025, 3, 4))
+    assert sent[1] == {"text": "Priya signs the renewal.", "said_at": "2025-03-04"}
+    g.memories.add("Tea, not coffee.", said_at="2025-03-04T15:00:00+05:30")
+    assert sent[2]["said_at"] == "2025-03-04T15:00:00+05:30"
+    g.memories.add("No date.")
+    assert "said_at" not in sent[3]
+    with pytest.raises(ValueError, match="web page"):
+        g.memories.add(url="https://acme.test", said_at="2025-03-04")
+    a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: sent.append(json.loads(r.content)) or httpx.Response(201, json={"source": SOURCE}))))
+    asyncio.run(a.memories.add("Async too.", said_at=date(2024, 1, 2)))
+    assert sent[-1]["said_at"] == "2024-01-02"
+
+
 def test_listing_pages_through_every_memory_and_opening_one():
     def handler(r):
         if r.url.path == "/v1/memories":

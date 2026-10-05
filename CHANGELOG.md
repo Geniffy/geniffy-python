@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `memories.add(..., said_at=...)`: when a note or conversation from the past was said (a datetime, a date or
+  an ISO 8601 string), so what it teaches is dated by it. Needs the API with `said_at` (October 2026).
+
 ## 0.1.1
 
 - The package page links to the source on GitHub, the docs and the issue tracker.
