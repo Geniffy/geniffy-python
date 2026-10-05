@@ -82,6 +82,60 @@ def test_something_said_in_the_past_carries_its_date():
     assert sent[-1]["said_at"] == "2024-01-02"
 
 
+def test_your_own_id_goes_with_every_add_and_finds_and_deletes_the_source():
+    """Sending again under the same external_id updates that source on Geniffy's side; the client's part is
+    to send the id with a note, a conversation, a link and a file, and to find and delete by it."""
+    sent = []
+    held = dict(SOURCE, external_id="ticket-42")
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, dict(r.url.params), r.content))
+        if r.method == "GET" and r.url.path == "/v1/sources":
+            found = [held] if r.url.params.get("external_id") == "ticket-42" else []
+            return httpx.Response(200, json={"sources": found, "total": len(found), "next": None})
+        if r.method == "DELETE":
+            return httpx.Response(200, json={"id": held["id"], "external_id": "ticket-42", "deleted": True})
+        return httpx.Response(201, json={"source": held})
+
+    g = make(handler)
+    src = g.memories.add("Customer asked about invoice 7.", title="Ticket 42", external_id="ticket-42")
+    assert src.external_id == "ticket-42"
+    assert json.loads(sent[-1][3]) == {"text": "Customer asked about invoice 7.", "title": "Ticket 42",
+                                       "external_id": "ticket-42"}
+    g.memories.add(messages=[{"role": "user", "content": "I moved to Pune."}], external_id="chat-7")
+    assert json.loads(sent[-1][3])["external_id"] == "chat-7"
+    g.memories.add("No id.")
+    assert "external_id" not in json.loads(sent[-1][3])
+    g.memories.add_file(b"%PDF-1.4", filename="plan.pdf", external_id="plan-pdf")
+    assert b'name="external_id"' in sent[-1][3] and b"plan-pdf" in sent[-1][3]
+
+    assert g.sources.get(external_id="ticket-42").id == SOURCE["id"]
+    assert sent[-1][:3] == ("GET", "/v1/sources", {"external_id": "ticket-42"})
+    with pytest.raises(NotFoundError):
+        g.sources.get(external_id="ticket-43")
+    g.sources.delete(external_id="ticket-42")
+    assert sent[-1][:3] == ("DELETE", "/v1/sources", {"external_id": "ticket-42"})
+    g.sources.delete(SOURCE["id"])
+    assert sent[-1][:2] == ("DELETE", f"/v1/sources/{SOURCE['id']}")
+    for wrong in ({}, {"source_id": "a" * 32, "external_id": "ticket-42"}):
+        with pytest.raises(TypeError, match="one of the two"):
+            g.sources.get(**wrong)
+        with pytest.raises(TypeError, match="one of the two"):
+            g.sources.delete(**wrong)
+
+    a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    async def main():
+        await a.memories.add("Async too.", external_id="ticket-42")
+        assert json.loads(sent[-1][3])["external_id"] == "ticket-42"
+        assert (await a.sources.get(external_id="ticket-42")).external_id == "ticket-42"
+        with pytest.raises(NotFoundError):
+            await a.sources.get(external_id="nope")
+        await a.sources.delete(external_id="ticket-42")
+        assert sent[-1][:3] == ("DELETE", "/v1/sources", {"external_id": "ticket-42"})
+    asyncio.run(main())
+
+
 def test_listing_pages_through_every_memory_and_opening_one():
     def handler(r):
         if r.url.path == "/v1/memories":

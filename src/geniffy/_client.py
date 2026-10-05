@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ._errors import APIConnectionError, GeniffyError, from_response
+from ._errors import APIConnectionError, GeniffyError, NotFoundError, from_response
 from ._types import Answer, Kind, Memory, MemoryDetail, MemoryPage, Source, SourcePage
 
 __version__ = "0.1.1"
@@ -113,8 +113,10 @@ SaidAt = Union[str, datetime, date, None]
 
 
 def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[Dict[str, Any]]],
-              title: Optional[str], said_at: SaidAt) -> Dict[str, Any]:
+              title: Optional[str], said_at: SaidAt, external_id: Optional[str] = None) -> Dict[str, Any]:
     body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
+    if external_id is not None:
+        body["external_id"] = str(external_id)
     if messages is not None and title:
         body["title"] = title
     if said_at is not None:
@@ -125,10 +127,19 @@ def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[D
     return body
 
 
-def _multipart(file: FileInput, filename: Optional[str], title: Optional[str]):
+def _multipart(file: FileInput, filename: Optional[str], title: Optional[str], external_id: Optional[str] = None):
     name, content = _file(file, filename)
     files = {"file": (name, content, mimetypes.guess_type(name)[0] or "application/octet-stream")}
-    return files, ({"title": title} if title else None)
+    data = {k: str(v) for k, v in (("title", title), ("external_id", external_id)) if v}
+    return files, (data or None)
+
+
+def _one_source(source_id: Optional[str], external_id: Optional[str]) -> None:
+    if (source_id is None) == (external_id is None):
+        raise TypeError("Name the source by its id or by your own external_id, one of the two.")
+
+
+_NO_EXTERNAL = "No source in this space has that external_id."
 
 
 def _hold(http: Any, left: float) -> float:
@@ -283,7 +294,7 @@ class Memories:
 
     def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
             messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
-            said_at: SaidAt = None) -> Source:
+            said_at: SaidAt = None, external_id: Optional[str] = None) -> Source:
         """Add a note (text), a web page (url=...) that Geniffy reads once, or a conversation
         (messages=[{"role": ..., "content": ...}]) as your framework already holds it: content as a
         string, or as Anthropic's blocks or OpenAI's parts, or parts as Gemini holds them. Only text is
@@ -291,8 +302,12 @@ class Memories:
         become facts about the user. Learning takes a moment: see sources.wait().
 
         said_at: when a note or conversation from the past was said (a datetime, a date, or an ISO 8601
-        string), so what it teaches is dated by it. Left out, now."""
-        body = _add_body(text, url, messages, title, said_at)
+        string), so what it teaches is dated by it. Left out, now.
+
+        external_id: your own id for it (a ticket's, a document's, a conversation's). Send again under the
+        same id and that source is updated rather than added twice: only what changed is learned, and
+        what was removed is taken back. Find or delete it by the same id with sources.get / delete."""
+        body = _add_body(text, url, messages, title, said_at, external_id)
         return Source.from_json(self._c._request("POST", "/v1/memories", json=body)["source"])
 
     def add_many(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -306,9 +321,11 @@ class Memories:
         a trail rather than quietly overwriting."""
         return self._c._request("PATCH", f"/v1/memories/{int(memory_id)}", json={"text": text})
 
-    def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None) -> Source:
-        """Add a PDF or Word (.docx) file: a path, bytes, or a file opened with 'rb'."""
-        files, data = _multipart(file, filename, title)
+    def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None,
+                 external_id: Optional[str] = None) -> Source:
+        """Add a PDF or Word (.docx) file: a path, bytes, or a file opened with 'rb'. Under an external_id,
+        sending a new version updates the source that id names."""
+        files, data = _multipart(file, filename, title, external_id)
         return Source.from_json(self._c._request("POST", "/v1/memories/file", files=files, data=data)["source"])
 
     def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0) -> MemoryPage:
@@ -339,12 +356,24 @@ class Sources:
     def list(self, *, limit: int = 100, cursor: int = 0) -> SourcePage:
         return SourcePage.from_json(self._c._request("GET", "/v1/sources", params={"limit": limit, "cursor": cursor}))
 
-    def get(self, source_id: str) -> Source:
-        return Source.from_json(self._c._request("GET", f"/v1/sources/{source_id}")["source"])
+    def get(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> Source:
+        """A source, by its id or by the external_id you added it under (NotFoundError if none)."""
+        _one_source(source_id, external_id)
+        if external_id is None:
+            return Source.from_json(self._c._request("GET", f"/v1/sources/{source_id}")["source"])
+        found = self._c._request("GET", "/v1/sources", params={"external_id": str(external_id)}).get("sources") or []
+        if not found:
+            raise NotFoundError(_NO_EXTERNAL, status=404, code="not_found")
+        return Source.from_json(found[0])
 
-    def delete(self, source_id: str) -> None:
-        """Delete a source and every memory learned only from it."""
-        self._c._request("DELETE", f"/v1/sources/{source_id}")
+    def delete(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> None:
+        """Delete a source and every memory learned only from it, by its id or by the external_id you
+        added it under: the call for a record your app deleted."""
+        _one_source(source_id, external_id)
+        if external_id is None:
+            self._c._request("DELETE", f"/v1/sources/{source_id}")
+        else:
+            self._c._request("DELETE", "/v1/sources", params={"external_id": str(external_id)})
 
     def wait(self, source_id: str, *, timeout: float = 120.0, interval: float = 2.0) -> Source:
         """Wait until Geniffy has learned from a source (or could not), then return it. Geniffy holds the
@@ -467,8 +496,8 @@ class AsyncMemories:
 
     async def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
                   messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
-                  said_at: SaidAt = None) -> Source:
-        body = _add_body(text, url, messages, title, said_at)
+                  said_at: SaidAt = None, external_id: Optional[str] = None) -> Source:
+        body = _add_body(text, url, messages, title, said_at, external_id)
         out = await self._c._request("POST", "/v1/memories", json=body)
         return Source.from_json(out["source"])
 
@@ -478,8 +507,9 @@ class AsyncMemories:
     async def correct(self, memory_id: int, text: str) -> Dict[str, Any]:
         return await self._c._request("PATCH", f"/v1/memories/{int(memory_id)}", json={"text": text})
 
-    async def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None) -> Source:
-        files, data = _multipart(file, filename, title)
+    async def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None,
+                       external_id: Optional[str] = None) -> Source:
+        files, data = _multipart(file, filename, title, external_id)
         return Source.from_json((await self._c._request("POST", "/v1/memories/file", files=files, data=data))["source"])
 
     async def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0) -> MemoryPage:
@@ -507,11 +537,21 @@ class AsyncSources:
     async def list(self, *, limit: int = 100, cursor: int = 0) -> SourcePage:
         return SourcePage.from_json(await self._c._request("GET", "/v1/sources", params={"limit": limit, "cursor": cursor}))
 
-    async def get(self, source_id: str) -> Source:
-        return Source.from_json((await self._c._request("GET", f"/v1/sources/{source_id}"))["source"])
+    async def get(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> Source:
+        _one_source(source_id, external_id)
+        if external_id is None:
+            return Source.from_json((await self._c._request("GET", f"/v1/sources/{source_id}"))["source"])
+        found = (await self._c._request("GET", "/v1/sources", params={"external_id": str(external_id)})).get("sources") or []
+        if not found:
+            raise NotFoundError(_NO_EXTERNAL, status=404, code="not_found")
+        return Source.from_json(found[0])
 
-    async def delete(self, source_id: str) -> None:
-        await self._c._request("DELETE", f"/v1/sources/{source_id}")
+    async def delete(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> None:
+        _one_source(source_id, external_id)
+        if external_id is None:
+            await self._c._request("DELETE", f"/v1/sources/{source_id}")
+        else:
+            await self._c._request("DELETE", "/v1/sources", params={"external_id": str(external_id)})
 
     async def wait(self, source_id: str, *, timeout: float = 120.0, interval: float = 2.0) -> Source:
         deadline = time.monotonic() + timeout

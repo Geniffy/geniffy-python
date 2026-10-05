@@ -70,6 +70,15 @@ mem.memories.add_many([{"text": "..."}, {"url": "https://..."}])
 
 A file or page that can't be read raises `UnreadableError`; `error.source` is the row it left, with the reason.
 
+Syncing your own records? Give each its id. Sent again under the same `external_id`, the source is updated
+rather than added twice: only what changed is learned, and what was removed is taken back.
+
+```python
+mem.memories.add(ticket.body, title=ticket.subject, external_id=f"ticket-{ticket.id}")
+mem.sources.get(external_id=f"ticket-{ticket.id}")
+mem.sources.delete(external_id=f"ticket-{ticket.id}")     # when the ticket is deleted in your app
+```
+
 ## Read and correct
 
 ```python
