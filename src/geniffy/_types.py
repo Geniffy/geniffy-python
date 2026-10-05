@@ -14,12 +14,14 @@ class SourceRef:
     id: Optional[str]
     kind: str
     title: str
+    labels: Dict[str, str] = field(default_factory=dict)   # the labels on that source
 
     @classmethod
     def from_json(cls, d: Optional[Dict[str, Any]]) -> Optional["SourceRef"]:
         if not d:
             return None
-        return cls(id=d.get("id"), kind=str(d.get("kind") or "other"), title=str(d.get("title") or ""))
+        return cls(id=d.get("id"), kind=str(d.get("kind") or "other"), title=str(d.get("title") or ""),
+                   labels=dict(d.get("labels") or {}))
 
 
 @dataclass

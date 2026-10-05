@@ -632,3 +632,9 @@ def test_a_failed_calls_error_carries_the_id_geniffy_gave_it():
     else:
         raise AssertionError("expected NotFoundError")
 
+
+
+def test_a_memory_names_its_sources_labels():
+    m = geniffy.Memory.from_json(dict(MEM, source=dict(MEM["source"], labels={"channel": "email"})))
+    assert m.source is not None and m.source.labels == {"channel": "email"}
+    assert geniffy.Memory.from_json(MEM).source.labels == {}, "a source with none, or an API from before labels"
