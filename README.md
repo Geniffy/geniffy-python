@@ -65,6 +65,9 @@ key = client.space(f"user_{user.id}").keys.create(name="Asha's phone")   # key.k
 client.space(f"user_{user.id}").keys.revoke(key.id)
 ```
 
+Group your users' profiles your way with sections: `client.sections.create("billing", keywords=["invoice"])`
+for every user, or on `client.space(id)` for one.
+
 ## Add
 
 ```python
