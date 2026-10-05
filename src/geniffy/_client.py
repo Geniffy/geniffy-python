@@ -18,7 +18,7 @@ import random
 import re
 import time
 from datetime import date, datetime
-from typing import IO, Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
+from typing import IO, Any, AsyncIterator, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union
 from urllib.parse import quote
 
 import httpx
@@ -408,6 +408,14 @@ class Memories:
         self._c._request("DELETE", f"/v1/memories/{int(memory_id)}")
 
 
+def _kept_ids(keep: Iterable[str]) -> Set[str]:
+    """The external_ids a delete by labels leaves. One id on its own is refused: as a string it would read as
+    its letters, and keep nothing."""
+    if isinstance(keep, (str, bytes)):
+        raise TypeError("keep is a collection of external_ids, such as a set, not one id.")
+    return {str(k) for k in keep}
+
+
 def _key_body(name: Optional[str], rpm: Optional[int], expires_at: SaidAt = None) -> Dict[str, Any]:
     body: Dict[str, Any] = {}
     if name:
@@ -517,10 +525,27 @@ class Sources:
         params = {"limit": limit, "cursor": cursor, **_label_params(labels)}
         return SourcePage.from_json(self._c._request("GET", "/v1/sources", params=params))
 
-    def delete_labelled(self, labels: LabelFilter) -> int:
+    def delete_labelled(self, labels: LabelFilter, *, keep: Optional[Iterable[str]] = None) -> int:
         """Delete every source carrying these labels, and every memory learned only from them: the call when
-        your user disconnects a data source whose things you added under its label. Returns how many."""
+        your user disconnects a data source whose things you added under its label. Returns how many.
+
+        keep: the external_ids to leave, for the end of a sync that read everything: every other source with
+        these labels, such as what is gone from the data source, is deleted."""
         _need_labels(labels)
+        if keep is not None:
+            kept, gone, cursor = _kept_ids(keep), [], 0
+            while cursor is not None:                 # the whole list first: deleting moves the pages
+                page = self.list(labels=labels, cursor=cursor)
+                gone += [s.id for s in page.sources if s.external_id not in kept]
+                cursor = page.next
+            deleted = 0
+            for source_id in gone:
+                try:
+                    self.delete(source_id)
+                    deleted += 1
+                except NotFoundError:                 # deleted meanwhile: gone either way
+                    pass
+            return deleted
         total = 0
         for _ in range(_LABELLED_CALLS):
             out = self._c._request("DELETE", "/v1/sources", params=_label_params(labels))
@@ -721,8 +746,22 @@ class AsyncSources:
         params = {"limit": limit, "cursor": cursor, **_label_params(labels)}
         return SourcePage.from_json(await self._c._request("GET", "/v1/sources", params=params))
 
-    async def delete_labelled(self, labels: LabelFilter) -> int:
+    async def delete_labelled(self, labels: LabelFilter, *, keep: Optional[Iterable[str]] = None) -> int:
         _need_labels(labels)
+        if keep is not None:
+            kept, gone, cursor = _kept_ids(keep), [], 0
+            while cursor is not None:
+                page = await self.list(labels=labels, cursor=cursor)
+                gone += [s.id for s in page.sources if s.external_id not in kept]
+                cursor = page.next
+            deleted = 0
+            for source_id in gone:
+                try:
+                    await self.delete(source_id)
+                    deleted += 1
+                except NotFoundError:
+                    pass
+            return deleted
         total = 0
         for _ in range(_LABELLED_CALLS):
             out = await self._c._request("DELETE", "/v1/sources", params=_label_params(labels))

@@ -82,6 +82,41 @@ def test_something_said_in_the_past_carries_its_date():
     assert sent[-1]["said_at"] == "2024-01-02"
 
 
+def test_a_delete_by_label_can_keep_what_a_sync_still_has():
+    """keep=: the end of a sync that read everything. The whole labelled list is read first, then every source
+    whose external_id isn't kept is deleted by its id; one deleted meanwhile is no error, and one id on its
+    own is refused rather than read as its letters."""
+    labelled = {"channel": "drive"}
+    held = [dict(SOURCE, id="s1", external_id="drive:a"), dict(SOURCE, id="s2", external_id="drive:b"),
+            dict(SOURCE, id="s3")]
+    sent = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, dict(r.url.params)))
+        if r.method == "GET":
+            i = int(r.url.params.get("cursor", "0"))
+            return httpx.Response(200, json={"sources": [held[i]], "total": 3, "next": i + 1 if i < 2 else None})
+        if r.url.path.endswith("/s3"):
+            return httpx.Response(404, json={"error": {"code": "not_found", "message": "No such source."}})
+        return httpx.Response(200, json={"id": "s2", "deleted": True})
+
+    g = make(handler)
+    assert g.sources.delete_labelled(labelled, keep={"drive:a"}) == 1
+    assert [m for m, _, _ in sent] == ["GET", "GET", "GET", "DELETE", "DELETE"]
+    assert all(q.get("label") == "channel:drive" for m, _, q in sent if m == "GET")
+    assert [p for m, p, _ in sent if m == "DELETE"] == ["/v1/sources/s2", "/v1/sources/s3"]
+    with pytest.raises(TypeError, match="not one id"):
+        g.sources.delete_labelled(labelled, keep="drive:a")
+
+    async def run():
+        sent.clear()
+        a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        assert await a.sources.delete_labelled(labelled, keep=["drive:a", "drive:b"]) == 0
+        assert [p for m, p, _ in sent if m == "DELETE"] == ["/v1/sources/s3"]
+        await a.close()
+    asyncio.run(run())
+
+
 def test_sources_are_listed_and_deleted_by_label():
     """sources.list(labels=...) filters; delete_labelled() calls again while the API says there are more."""
     sent = []
