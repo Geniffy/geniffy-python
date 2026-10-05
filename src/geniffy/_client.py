@@ -482,12 +482,36 @@ class AsyncKeys:
         await self._c._request("DELETE", f"/v1/keys/{int(key_id)}")
 
 
+def _need_labels(labels: Optional[LabelFilter]) -> None:
+    if not labels:
+        raise ValueError("Name the labels whose sources to delete, such as {\"channel\": \"gmail\"}.")
+
+
+# Each call deletes up to 100 sources and says whether more carry the labels; this many calls is the most one
+# delete_labelled() makes, so a filter that somehow keeps matching cannot loop for ever.
+_LABELLED_CALLS = 1000
+
+
 class Sources:
     def __init__(self, client: Geniffy):
         self._c = client
 
-    def list(self, *, limit: int = 100, cursor: int = 0) -> SourcePage:
-        return SourcePage.from_json(self._c._request("GET", "/v1/sources", params={"limit": limit, "cursor": cursor}))
+    def list(self, *, limit: int = 100, cursor: int = 0, labels: Optional[LabelFilter] = None) -> SourcePage:
+        """What was added, newest first; with labels, only the sources carrying them."""
+        params = {"limit": limit, "cursor": cursor, **_label_params(labels)}
+        return SourcePage.from_json(self._c._request("GET", "/v1/sources", params=params))
+
+    def delete_labelled(self, labels: LabelFilter) -> int:
+        """Delete every source carrying these labels, and every memory learned only from them: the call when
+        your user disconnects a data source whose things you added under its label. Returns how many."""
+        _need_labels(labels)
+        total = 0
+        for _ in range(_LABELLED_CALLS):
+            out = self._c._request("DELETE", "/v1/sources", params=_label_params(labels))
+            total += int(out.get("sources_deleted") or 0)
+            if not out.get("more"):
+                break
+        return total
 
     def get(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> Source:
         """A source, by its id or by the external_id you added it under (NotFoundError if none)."""
@@ -672,8 +696,19 @@ class AsyncSources:
     def __init__(self, client: AsyncGeniffy):
         self._c = client
 
-    async def list(self, *, limit: int = 100, cursor: int = 0) -> SourcePage:
-        return SourcePage.from_json(await self._c._request("GET", "/v1/sources", params={"limit": limit, "cursor": cursor}))
+    async def list(self, *, limit: int = 100, cursor: int = 0, labels: Optional[LabelFilter] = None) -> SourcePage:
+        params = {"limit": limit, "cursor": cursor, **_label_params(labels)}
+        return SourcePage.from_json(await self._c._request("GET", "/v1/sources", params=params))
+
+    async def delete_labelled(self, labels: LabelFilter) -> int:
+        _need_labels(labels)
+        total = 0
+        for _ in range(_LABELLED_CALLS):
+            out = await self._c._request("DELETE", "/v1/sources", params=_label_params(labels))
+            total += int(out.get("sources_deleted") or 0)
+            if not out.get("more"):
+                break
+        return total
 
     async def get(self, source_id: Optional[str] = None, *, external_id: Optional[str] = None) -> Source:
         _one_source(source_id, external_id)

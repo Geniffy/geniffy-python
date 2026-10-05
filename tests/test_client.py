@@ -82,6 +82,40 @@ def test_something_said_in_the_past_carries_its_date():
     assert sent[-1]["said_at"] == "2024-01-02"
 
 
+def test_sources_are_listed_and_deleted_by_label():
+    """sources.list(labels=...) filters; delete_labelled() calls again while the API says there are more."""
+    sent = []
+    left = {"n": 3}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, r.url.params.multi_items()))
+        if r.method == "GET":
+            return httpx.Response(200, json={"sources": [dict(SOURCE, labels={"channel": "gmail"})], "total": 1,
+                                             "next": None})
+        took = min(2, left["n"])
+        left["n"] -= took
+        return httpx.Response(200, json={"sources_deleted": took, "more": left["n"] > 0,
+                                         "labels": {"channel": "gmail"}})
+
+    g = make(handler)
+    page = g.sources.list(labels={"channel": "gmail"})
+    assert page.sources[0].labels == {"channel": "gmail"}
+    assert ("label", "channel:gmail") in sent[-1][2]
+    assert g.sources.delete_labelled({"channel": "gmail"}) == 3
+    assert [m for m, p, _ in sent[1:]] == ["DELETE", "DELETE"] and all(("label", "channel:gmail") in q for _, _, q in sent[1:])
+    with pytest.raises(ValueError, match="Name the labels"):
+        g.sources.delete_labelled({})
+
+    async def run():
+        left["n"] = 1
+        a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        assert await a.sources.delete_labelled({"channel": ["gmail", "outlook"]}) == 1
+        assert [v for k, v in sent[-1][2] if k == "label"] == ["channel:gmail", "channel:outlook"]
+        assert (await a.sources.list(labels={"channel": "gmail"})).total == 1
+        await a.close()
+    asyncio.run(run())
+
+
 def test_labels_go_with_every_add_and_every_read():
     """Labels on a note, a conversation, a link and a file; a filter on search, context, ask, list and brief,
     in the body or, for a GET, as label=name:value once for each value."""
