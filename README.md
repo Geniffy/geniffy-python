@@ -89,6 +89,16 @@ mem.sources.get(external_id=f"ticket-{ticket.id}")
 mem.sources.delete(external_id=f"ticket-{ticket.id}")     # when the ticket is deleted in your app
 ```
 
+Label what you add with your own name/value pairs, then keep any read to them. Every name must match, and a
+list of values is any one of them.
+
+```python
+mem.memories.add(email.body, title=email.subject, labels={"channel": "email", "account": "lumen"})
+mem.context("When does the renewal come up?", labels={"account": "lumen"})
+mem.search("pricing", labels={"channel": ["email", "chat"]})
+mem.memories.list(labels={"account": "lumen"})
+```
+
 ## Read and correct
 
 ```python

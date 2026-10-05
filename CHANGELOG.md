@@ -7,6 +7,10 @@
 - `external_id=` on `memories.add` and `add_file`: your own id for a source. Sent again under the same id,
   the source is updated rather than added twice, and only what changed is learned. `sources.get` and
   `sources.delete` take `external_id=` too. `Source.external_id` says which id a source was added under.
+- `labels=` on `memories.add` and `add_file`: up to 20 of your own name/value pairs on a source
+  (`{"channel": "email"}`), and as a filter on `search`, `context`, `ask`, `memories.list`, `memories.iter` and
+  `brief`: every name must match, and a list of values is any one of them. `Source.labels` shows a source's.
+  Needs the API with labels (October 2026).
 - `sections`: the sections profiles are grouped into. `client.sections.create(name, keywords=...)` adds one
   for every one of your users; on `client.space(id)`, for that user only. `list()` and `delete(id)` too.
 - `keys` on a client bound to one of your users: `client.space(id).keys.create(name=..., rpm=...)` makes a key

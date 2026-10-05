@@ -83,6 +83,7 @@ class Source:
     added_by: Optional[str] = None
     added_at: Optional[str] = None
     external_id: Optional[str] = None  # your own id for it, when you gave one
+    labels: Dict[str, str] = field(default_factory=dict)  # your own name/value pairs on it
     raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -94,7 +95,8 @@ class Source:
         return cls(id=str(d["id"]), kind=str(d.get("kind") or ""), title=str(d.get("title") or ""),
                    status=str(d.get("status") or ""), error=d.get("error"), facts=d.get("facts"), url=d.get("url"),
                    file_name=d.get("file_name"), file_type=d.get("file_type"), size_bytes=d.get("size_bytes"),
-                   added_by=d.get("added_by"), added_at=d.get("added_at"), external_id=d.get("external_id"), raw=d)
+                   added_by=d.get("added_by"), added_at=d.get("added_at"), external_id=d.get("external_id"),
+                   labels=dict(d.get("labels") or {}), raw=d)
 
 
 @dataclass

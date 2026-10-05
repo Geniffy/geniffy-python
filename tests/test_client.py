@@ -82,6 +82,70 @@ def test_something_said_in_the_past_carries_its_date():
     assert sent[-1]["said_at"] == "2024-01-02"
 
 
+def test_labels_go_with_every_add_and_every_read():
+    """Labels on a note, a conversation, a link and a file; a filter on search, context, ask, list and brief,
+    in the body or, for a GET, as label=name:value once for each value."""
+    sent = []
+    held = dict(SOURCE, labels={"channel": "email"})
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, r.url.params.multi_items(), r.content))
+        if r.url.path == "/v1/ask":
+            return httpx.Response(200, json={"question": "q", "answer": None, "message": "nothing", "memories": []})
+        if r.url.path == "/v1/context":
+            return httpx.Response(200, json={"question": "q", "context": "- x", "memories": [], "used": 0,
+                                             "empty": False})
+        if r.url.path == "/v1/search" or (r.method == "GET" and r.url.path == "/v1/memories"):
+            return httpx.Response(200, json={"memories": [MEM], "counts": {}, "total": 1, "next": None})
+        if r.url.path == "/v1/brief":
+            return httpx.Response(200, json={"subject": None, "memories": [], "total": 0})
+        return httpx.Response(201, json={"source": held})
+
+    g = make(handler)
+    body = lambda: json.loads(sent[-1][3])  # noqa: E731
+    assert g.memories.add("Lumen renews in March.", labels={"channel": "email"}).labels == {"channel": "email"}
+    assert body() == {"text": "Lumen renews in March.", "labels": {"channel": "email"}}
+    g.memories.add(messages=[{"role": "user", "content": "I moved to Pune."}], labels={"team": "sales"})
+    assert body()["labels"] == {"team": "sales"}
+    g.memories.add(url="https://acme.test", labels={})
+    assert body()["labels"] == {}, "{} goes, so a source's labels can be cleared"
+    g.memories.add("No labels.")
+    assert "labels" not in body()
+    g.memories.add_file(b"%PDF-1.4", filename="plan.pdf", labels={"channel": "drive"})
+    assert b'name="labels"' in sent[-1][3] and b'{"channel": "drive"}' in sent[-1][3]
+
+    either = {"channel": ["email", "chat"], "team": "sales"}
+    g.search("lumen", labels=either)
+    assert body() == {"q": "lumen", "limit": 10, "labels": either}
+    g.context("Who signs?", labels={"channel": "chat"})
+    assert body()["labels"] == {"channel": "chat"}
+    g.ask("Who signs?", labels={"channel": "chat"})
+    assert body() == {"question": "Who signs?", "labels": {"channel": "chat"}}
+    g.memories.list(labels=either)
+    assert [v for k, v in sent[-1][2] if k == "label"] == ["channel:email", "channel:chat", "team:sales"]
+    g.brief("Priya", labels={"channel": "email"})
+    assert ("label", "channel:email") in sent[-1][2] and ("subject", "Priya") in sent[-1][2]
+    g.search("lumen")
+    assert "labels" not in body(), "no filter, no field"
+
+    async def run():
+        a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        assert (await a.memories.add("x", labels={"a": "b"})).labels == {"channel": "email"}
+        assert body()["labels"] == {"a": "b"}
+        await a.search("lumen", labels={"a": "b"})
+        assert body()["labels"] == {"a": "b"}
+        await a.context("q", labels={"a": "b"})
+        assert body()["labels"] == {"a": "b"}
+        await a.ask("q", labels={"a": "b"})
+        assert body()["labels"] == {"a": "b"}
+        await a.memories.list(labels={"a": ["b", "c"]})
+        assert [v for k, v in sent[-1][2] if k == "label"] == ["a:b", "a:c"]
+        await a.brief(labels={"a": "b"})
+        assert ("label", "a:b") in sent[-1][2]
+        await a.close()
+    asyncio.run(run())
+
+
 def test_your_own_id_goes_with_every_add_and_finds_and_deletes_the_source():
     """Sending again under the same external_id updates that source on Geniffy's side; the client's part is
     to send the id with a note, a conversation, a link and a file, and to find and delete by it."""

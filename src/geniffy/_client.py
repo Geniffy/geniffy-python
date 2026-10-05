@@ -11,6 +11,7 @@ the request never reached Geniffy (a failed connection) or on 429, so a retry ne
 from __future__ import annotations
 
 import asyncio
+import json
 import mimetypes
 import os
 import random
@@ -28,6 +29,10 @@ __version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://api.geniffy.com"
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 FileInput = Union[str, "os.PathLike[str]", bytes, IO[bytes]]
+# A source's labels: your own name/value pairs. A filter by them: every name must match, and a list of values is
+# any one of them ({"channel": ["email", "chat"]}).
+Labels = Dict[str, str]
+LabelFilter = Dict[str, Union[str, List[str]]]
 
 
 def _settings(api_key: Optional[str], base_url: Optional[str]) -> Tuple[str, str, Dict[str, str]]:
@@ -113,10 +118,13 @@ SaidAt = Union[str, datetime, date, None]
 
 
 def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[Dict[str, Any]]],
-              title: Optional[str], said_at: SaidAt, external_id: Optional[str] = None) -> Dict[str, Any]:
+              title: Optional[str], said_at: SaidAt, external_id: Optional[str] = None,
+              labels: Optional[Labels] = None) -> Dict[str, Any]:
     body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
     if external_id is not None:
         body["external_id"] = str(external_id)
+    if labels is not None:
+        body["labels"] = dict(labels)
     if messages is not None and title:
         body["title"] = title
     if said_at is not None:
@@ -127,10 +135,13 @@ def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[D
     return body
 
 
-def _multipart(file: FileInput, filename: Optional[str], title: Optional[str], external_id: Optional[str] = None):
+def _multipart(file: FileInput, filename: Optional[str], title: Optional[str], external_id: Optional[str] = None,
+               labels: Optional[Labels] = None):
     name, content = _file(file, filename)
     files = {"file": (name, content, mimetypes.guess_type(name)[0] or "application/octet-stream")}
     data = {k: str(v) for k, v in (("title", title), ("external_id", external_id)) if v}
+    if labels is not None:
+        data["labels"] = json.dumps(dict(labels))
     return files, (data or None)
 
 
@@ -151,18 +162,38 @@ def _hold(http: Any, left: float) -> float:
     return round(max(0.0, min(left, cap, 30.0)), 1)
 
 
-def _page_params(kind: Optional[Kind], limit: int, cursor: int) -> Dict[str, Any]:
-    params: Dict[str, Any] = {"limit": limit, "cursor": cursor}
+def _label_params(labels: Optional[LabelFilter]) -> Dict[str, Any]:
+    """A filter in a query string: label=name:value, once for each value."""
+    if not labels:
+        return {}
+    return {"label": [f"{k}:{v}" for k, vs in labels.items() for v in (vs if isinstance(vs, list) else [vs])]}
+
+
+def _page_params(kind: Optional[Kind], limit: int, cursor: int, labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
+    params: Dict[str, Any] = {"limit": limit, "cursor": cursor, **_label_params(labels)}
     if kind:
         params["kind"] = kind
     return params
 
 
-def _search_body(q: str, limit: int, kind: Optional[Kind]) -> Dict[str, Any]:
+def _with_labels(body: Dict[str, Any], labels: Optional[LabelFilter]) -> Dict[str, Any]:
+    if labels:
+        body["labels"] = dict(labels)
+    return body
+
+
+def _search_body(q: str, limit: int, kind: Optional[Kind], labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
     body: Dict[str, Any] = {"q": q, "limit": limit}
     if kind:
         body["kind"] = kind
-    return body
+    return _with_labels(body, labels)
+
+
+def _brief_params(subject: Optional[str], limit: int, labels: Optional[LabelFilter]) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"limit": limit, **_label_params(labels)}
+    if subject:
+        q["subject"] = subject
+    return q
 
 
 # ── blocking ──────────────────────────────────────────────────────────────────
@@ -224,17 +255,20 @@ class Geniffy:
             return body
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def ask(self, question: str) -> Answer:
-        """An answer from your memory only. When nothing you added supports one, .answer is None."""
-        return Answer.from_json(self._request("POST", "/v1/ask", json={"question": question}))
+    def ask(self, question: str, *, labels: Optional[LabelFilter] = None) -> Answer:
+        """An answer from your memory only. When nothing you added supports one, .answer is None. With labels,
+        only from what the sources carrying them said."""
+        return Answer.from_json(self._request("POST", "/v1/ask", json=_with_labels({"question": question}, labels)))
 
-    def search(self, q: str, *, limit: int = 10, kind: Optional[Kind] = None) -> List[Memory]:
-        """The memories that best match q, best first."""
-        out = self._request("POST", "/v1/search", json=_search_body(q, limit, kind))
+    def search(self, q: str, *, limit: int = 10, kind: Optional[Kind] = None,
+               labels: Optional[LabelFilter] = None) -> List[Memory]:
+        """The memories that best match q, best first. labels={"channel": "email"} keeps to the sources
+        carrying them: every name must match, and a list of values is any one of them."""
+        out = self._request("POST", "/v1/search", json=_search_body(q, limit, kind, labels))
         return [Memory.from_json(m) for m in out.get("memories") or []]
 
     def context(self, question: str, *, limit: int = 12, kind: Optional[Kind] = None,
-                with_sources: bool = True) -> str:
+                with_sources: bool = True, labels: Optional[LabelFilter] = None) -> str:
         """The memories that bear on a question, already written out for YOUR prompt:
 
             prompt = f"{mem.context(question)}
@@ -243,25 +277,25 @@ User: {question}"
 
         This is the ten lines of formatting every integration writes after calling search, so it is
         written here once. It is never empty: when nothing is held it says so in words, because an
-        empty block reads to a model as permission to invent."""
-        return str(self.context_full(question, limit=limit, kind=kind, with_sources=with_sources)["context"])
+        empty block reads to a model as permission to invent. With labels, only what the sources carrying
+        them said."""
+        return str(self.context_full(question, limit=limit, kind=kind, with_sources=with_sources,
+                                     labels=labels)["context"])
 
     def context_full(self, question: str, *, limit: int = 12, kind: Optional[Kind] = None,
-                     with_sources: bool = True) -> Dict[str, Any]:
+                     with_sources: bool = True, labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
         """The same, with the memories behind it and whether anything was found."""
-        return self._request("POST", "/v1/context", json={"question": question, "limit": limit, "kind": kind,
-                                                          "with_sources": with_sources})
+        return self._request("POST", "/v1/context", json=_with_labels(
+            {"question": question, "limit": limit, "kind": kind, "with_sources": with_sources}, labels))
 
     def profile(self, subject: Optional[str] = None) -> Dict[str, Any]:
         """What stays true about someone, and what is going on with them now."""
         return self._request("GET", "/v1/profile", params={"subject": subject} if subject else None)
 
-    def brief(self, subject: Optional[str] = None, *, limit: int = 60) -> Dict[str, Any]:
+    def brief(self, subject: Optional[str] = None, *, limit: int = 60,
+              labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
         """What to read before dealing with someone."""
-        q: Dict[str, Any] = {"limit": limit}
-        if subject:
-            q["subject"] = subject
-        return self._request("GET", "/v1/brief", params=q)
+        return self._request("GET", "/v1/brief", params=_brief_params(subject, limit, labels))
 
     def graph(self) -> Dict[str, Any]:
         """What the memory holds and what connects to what. Every line has a memory behind it."""
@@ -296,7 +330,7 @@ class Memories:
 
     def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
             messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
-            said_at: SaidAt = None, external_id: Optional[str] = None) -> Source:
+            said_at: SaidAt = None, external_id: Optional[str] = None, labels: Optional[Labels] = None) -> Source:
         """Add a note (text), a web page (url=...) that Geniffy reads once, or a conversation
         (messages=[{"role": ..., "content": ...}]) as your framework already holds it: content as a
         string, or as Anthropic's blocks or OpenAI's parts, or parts as Gemini holds them. Only text is
@@ -308,8 +342,12 @@ class Memories:
 
         external_id: your own id for it (a ticket's, a document's, a conversation's). Send again under the
         same id and that source is updated rather than added twice: only what changed is learned, and
-        what was removed is taken back. Find or delete it by the same id with sources.get / delete."""
-        body = _add_body(text, url, messages, title, said_at, external_id)
+        what was removed is taken back. Find or delete it by the same id with sources.get / delete.
+
+        labels: up to 20 of your own name/value pairs ({"channel": "email", "project": "apollo"}) to filter
+        search, context, ask, list and brief by. Sent again under the same external_id they replace the old
+        ones, with nothing learned again; left out, they are kept; {} clears them."""
+        body = _add_body(text, url, messages, title, said_at, external_id, labels)
         return Source.from_json(self._c._request("POST", "/v1/memories", json=body)["source"])
 
     def add_many(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -324,21 +362,24 @@ class Memories:
         return self._c._request("PATCH", f"/v1/memories/{int(memory_id)}", json={"text": text})
 
     def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None,
-                 external_id: Optional[str] = None) -> Source:
+                 external_id: Optional[str] = None, labels: Optional[Labels] = None) -> Source:
         """Add a PDF or Word (.docx) file: a path, bytes, or a file opened with 'rb'. Under an external_id,
         sending a new version updates the source that id names."""
-        files, data = _multipart(file, filename, title, external_id)
+        files, data = _multipart(file, filename, title, external_id, labels)
         return Source.from_json(self._c._request("POST", "/v1/memories/file", files=files, data=data)["source"])
 
-    def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0) -> MemoryPage:
-        """One page of memories, newest first."""
-        return MemoryPage.from_json(self._c._request("GET", "/v1/memories", params=_page_params(kind, limit, cursor)))
+    def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0,
+             labels: Optional[LabelFilter] = None) -> MemoryPage:
+        """One page of memories, newest first; with labels, only what the sources carrying them said."""
+        return MemoryPage.from_json(self._c._request("GET", "/v1/memories",
+                                                     params=_page_params(kind, limit, cursor, labels)))
 
-    def iter(self, *, kind: Optional[Kind] = None, page_size: int = 100) -> Iterator[Memory]:
+    def iter(self, *, kind: Optional[Kind] = None, page_size: int = 100,
+             labels: Optional[LabelFilter] = None) -> Iterator[Memory]:
         """Every memory, newest first, a page at a time."""
         cursor: Optional[int] = 0
         while cursor is not None:
-            page = self.list(kind=kind, limit=page_size, cursor=cursor)
+            page = self.list(kind=kind, limit=page_size, cursor=cursor, labels=labels)
             yield from page.memories
             cursor = page.next
 
@@ -527,37 +568,36 @@ class AsyncGeniffy:
             return body
         raise AssertionError("unreachable")  # pragma: no cover
 
-    async def ask(self, question: str) -> Answer:
-        return Answer.from_json(await self._request("POST", "/v1/ask", json={"question": question}))
+    async def ask(self, question: str, *, labels: Optional[LabelFilter] = None) -> Answer:
+        return Answer.from_json(await self._request("POST", "/v1/ask", json=_with_labels({"question": question}, labels)))
 
-    async def search(self, q: str, *, limit: int = 10, kind: Optional[Kind] = None) -> List[Memory]:
-        out = await self._request("POST", "/v1/search", json=_search_body(q, limit, kind))
+    async def search(self, q: str, *, limit: int = 10, kind: Optional[Kind] = None,
+                     labels: Optional[LabelFilter] = None) -> List[Memory]:
+        out = await self._request("POST", "/v1/search", json=_search_body(q, limit, kind, labels))
         return [Memory.from_json(m) for m in out.get("memories") or []]
 
     # The async client lacked these until 5 Oct 2026, context() among them: the one call most apps want,
     # in the client most Python AI apps use (FastAPI, async agents). Each mirrors the sync method above.
     async def context(self, question: str, *, limit: int = 12, kind: Optional[Kind] = None,
-                      with_sources: bool = True) -> str:
+                      with_sources: bool = True, labels: Optional[LabelFilter] = None) -> str:
         """The memories that bear on a question, written out for your prompt; never empty."""
-        out = await self.context_full(question, limit=limit, kind=kind, with_sources=with_sources)
+        out = await self.context_full(question, limit=limit, kind=kind, with_sources=with_sources, labels=labels)
         return str(out["context"])
 
     async def context_full(self, question: str, *, limit: int = 12, kind: Optional[Kind] = None,
-                           with_sources: bool = True) -> Dict[str, Any]:
+                           with_sources: bool = True, labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
         """The same, with the memories behind it and whether anything was found."""
-        return await self._request("POST", "/v1/context", json={"question": question, "limit": limit, "kind": kind,
-                                                                "with_sources": with_sources})
+        return await self._request("POST", "/v1/context", json=_with_labels(
+            {"question": question, "limit": limit, "kind": kind, "with_sources": with_sources}, labels))
 
     async def profile(self, subject: Optional[str] = None) -> Dict[str, Any]:
         """What stays true about someone, and what is going on with them now."""
         return await self._request("GET", "/v1/profile", params={"subject": subject} if subject else None)
 
-    async def brief(self, subject: Optional[str] = None, *, limit: int = 60) -> Dict[str, Any]:
+    async def brief(self, subject: Optional[str] = None, *, limit: int = 60,
+                    labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
         """What to read before dealing with someone."""
-        q: Dict[str, Any] = {"limit": limit}
-        if subject:
-            q["subject"] = subject
-        return await self._request("GET", "/v1/brief", params=q)
+        return await self._request("GET", "/v1/brief", params=_brief_params(subject, limit, labels))
 
     async def graph(self) -> Dict[str, Any]:
         """What the memory holds and what connects to what."""
@@ -590,8 +630,9 @@ class AsyncMemories:
 
     async def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
                   messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
-                  said_at: SaidAt = None, external_id: Optional[str] = None) -> Source:
-        body = _add_body(text, url, messages, title, said_at, external_id)
+                  said_at: SaidAt = None, external_id: Optional[str] = None,
+                  labels: Optional[Labels] = None) -> Source:
+        body = _add_body(text, url, messages, title, said_at, external_id, labels)
         out = await self._c._request("POST", "/v1/memories", json=body)
         return Source.from_json(out["source"])
 
@@ -602,17 +643,20 @@ class AsyncMemories:
         return await self._c._request("PATCH", f"/v1/memories/{int(memory_id)}", json={"text": text})
 
     async def add_file(self, file: FileInput, *, filename: Optional[str] = None, title: Optional[str] = None,
-                       external_id: Optional[str] = None) -> Source:
-        files, data = _multipart(file, filename, title, external_id)
+                       external_id: Optional[str] = None, labels: Optional[Labels] = None) -> Source:
+        files, data = _multipart(file, filename, title, external_id, labels)
         return Source.from_json((await self._c._request("POST", "/v1/memories/file", files=files, data=data))["source"])
 
-    async def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0) -> MemoryPage:
-        return MemoryPage.from_json(await self._c._request("GET", "/v1/memories", params=_page_params(kind, limit, cursor)))
+    async def list(self, *, kind: Optional[Kind] = None, limit: int = 50, cursor: int = 0,
+                   labels: Optional[LabelFilter] = None) -> MemoryPage:
+        return MemoryPage.from_json(await self._c._request("GET", "/v1/memories",
+                                                           params=_page_params(kind, limit, cursor, labels)))
 
-    async def iter(self, *, kind: Optional[Kind] = None, page_size: int = 100) -> AsyncIterator[Memory]:
+    async def iter(self, *, kind: Optional[Kind] = None, page_size: int = 100,
+                   labels: Optional[LabelFilter] = None) -> AsyncIterator[Memory]:
         cursor: Optional[int] = 0
         while cursor is not None:
-            page = await self.list(kind=kind, limit=page_size, cursor=cursor)
+            page = await self.list(kind=kind, limit=page_size, cursor=cursor, labels=labels)
             for m in page.memories:
                 yield m
             cursor = page.next
