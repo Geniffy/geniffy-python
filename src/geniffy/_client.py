@@ -301,6 +301,11 @@ User: {question}"
         """What the memory holds and what connects to what. Every line has a memory behind it."""
         return self._request("GET", "/v1/graph")
 
+    def export(self) -> Dict[str, Any]:
+        """Everything held, as the user's own copy: every memory, current or not, with its status and the
+        sentence it came from, and every source. On client.space(id), for a user who asks what you hold."""
+        return self._request("GET", "/v1/export")
+
     def me(self) -> Dict[str, Any]:
         """Whose key this is, and which space this client is reading."""
         return self._request("GET", "/v1/me")
@@ -627,6 +632,10 @@ class AsyncGeniffy:
     async def graph(self) -> Dict[str, Any]:
         """What the memory holds and what connects to what."""
         return await self._request("GET", "/v1/graph")
+
+    async def export(self) -> Dict[str, Any]:
+        """Everything held, as the user's own copy."""
+        return await self._request("GET", "/v1/export")
 
     async def me(self) -> Dict[str, Any]:
         return await self._request("GET", "/v1/me")

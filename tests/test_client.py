@@ -634,6 +634,24 @@ def test_a_failed_calls_error_carries_the_id_geniffy_gave_it():
 
 
 
+def test_export_is_the_users_own_copy():
+    seen = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        seen.append((r.method, r.url.path, r.headers.get("x-geniffy-space")))
+        return httpx.Response(200, json={"exported_at": "2026-10-06T00:00:00+00:00", "stored_in": "x",
+                                         "memories": [dict(MEM, status="current", quote="q")], "sources": [SOURCE]})
+
+    out = make(handler).space("customer_1042").export()
+    assert out["memories"][0]["quote"] == "q" and seen[-1] == ("GET", "/v1/export", "customer_1042")
+
+    async def run():
+        a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        assert (await a.export())["sources"] == [SOURCE]
+        await a.close()
+    asyncio.run(run())
+
+
 def test_a_memory_names_its_sources_labels():
     m = geniffy.Memory.from_json(dict(MEM, source=dict(MEM["source"], labels={"channel": "email"})))
     assert m.source is not None and m.source.labels == {"channel": "email"}
