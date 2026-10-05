@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geniffy"
+version = "0.1.1"
+description = "Geniffy for Python: add notes, files and links to a memory, then search it and ask it."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Geniffy", email = "ops@geniffy.com" }]
+keywords = ["memory", "ai", "agents", "llm", "rag", "geniffy"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+dependencies = ["httpx>=0.25,<1"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://geniffy.com"
+Documentation = "https://docs.geniffy.com/sdks/python"
+Repository = "https://github.com/Geniffy/geniffy-python"
+Issues = "https://github.com/Geniffy/geniffy-python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geniffy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
