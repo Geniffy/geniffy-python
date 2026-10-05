@@ -4,6 +4,9 @@
 
 - `memories.add(..., said_at=...)`: when a note or conversation from the past was said (a datetime, a date or
   an ISO 8601 string), so what it teaches is dated by it. Needs the API with `said_at` (October 2026).
+- `space()`, `forget_space()` and `space=` refuse a blank space (`ValueError`) and anything that isn't a
+  string or an int (`TypeError`). A blank space used to mean your own memory, so a user with a missing id
+  landed in it. Your own memory is still the client with no space. An int id is taken as its digits.
 
 ## 0.1.1
 

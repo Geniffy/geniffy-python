@@ -41,6 +41,20 @@ def _settings(api_key: Optional[str], base_url: Optional[str]) -> Tuple[str, str
     return key, url, headers
 
 
+def _space_name(space: Any, what: str = "space()") -> str:
+    """One of your users, by your own name for them: a string, or an int id. A blank one is refused, not
+    read as no space: a client with no space reads YOUR memory, so a user with no id would land in it."""
+    if isinstance(space, bool) or not isinstance(space, (str, int)):
+        raise TypeError(f"{what} takes your name for one of your users, a string or an int id, "
+                        f"not {type(space).__name__}.")
+    name = str(space).strip()
+    if not name:
+        raise ValueError(f"{what} got a blank space. A client with no space reads your own memory, so a user "
+                         "with no id would land in it. Pass the user's id, or use the client itself for your "
+                         "own memory.")
+    return name
+
+
 def _delay(attempt: int, response: Optional[httpx.Response]) -> float:
     if response is not None:
         try:
@@ -155,11 +169,12 @@ class Geniffy:
     """
 
     def __init__(self, api_key: Optional[str] = None, *, base_url: Optional[str] = None, timeout: float = 60.0,
-                 max_retries: int = 2, http_client: Optional[httpx.Client] = None, space: str = ""):
+                 max_retries: int = 2, http_client: Optional[httpx.Client] = None,
+                 space: Union[str, int, None] = None):
         _, url, headers = _settings(api_key, base_url)
         self.max_retries = max(0, int(max_retries))
         self._http = http_client or httpx.Client(timeout=timeout)
-        self.space_id = (space or "").strip()
+        self.space_id = "" if space is None else _space_name(space, "space=")
         # One header carries the space, so every call a bound client makes is scoped without a
         # single method taking it, and a space can never be lost by forgetting an argument.
         if self.space_id:
@@ -169,12 +184,13 @@ class Geniffy:
         self.memories = Memories(self)
         self.sources = Sources(self)
 
-    def space(self, space: str) -> "Geniffy":
+    def space(self, space: Union[str, int]) -> "Geniffy":
         """The same client, pointed at one of YOUR users. It shares this client's connection pool,
-        so one per request is cheap. `space` is your own name for that user, an id or an email or
-        whatever you already call them, up to 128 letters, digits, dots, dashes or underscores."""
+        so one per request is cheap. `space` is your own name for that user, the id you already give
+        them: up to 128 letters, digits, dots, dashes or underscores, so an id rather than an email. A
+        blank one (or None) is refused rather than read as your own memory."""
         return Geniffy(self._api_key, base_url=self._base_url, timeout=self._timeout,
-                       max_retries=self.max_retries, http_client=self._http, space=space)
+                       max_retries=self.max_retries, http_client=self._http, space=_space_name(space))
 
     def _request(self, method: str, path: str, **kw: Any) -> Dict[str, Any]:
         for attempt in range(self.max_retries + 1):
@@ -246,10 +262,10 @@ User: {question}"
         """Which of your users have memory, busiest first."""
         return list(self._request("GET", "/v1/spaces").get("spaces") or [])
 
-    def forget_space(self, space: str) -> Dict[str, Any]:
+    def forget_space(self, space: Union[str, int]) -> Dict[str, Any]:
         """Everything one of your users ever said, gone: facts, sources, all of it. The call to make
         when they ask to be forgotten. It cannot be undone."""
-        return self._request("DELETE", f"/v1/spaces/{quote(str(space), safe='')}")
+        return self._request("DELETE", f"/v1/spaces/{quote(_space_name(space, 'forget_space()'), safe='')}")
 
     def close(self) -> None:
         self._http.close()
@@ -350,11 +366,12 @@ class AsyncGeniffy:
     """The same client for asyncio: every method is awaited."""
 
     def __init__(self, api_key: Optional[str] = None, *, base_url: Optional[str] = None, timeout: float = 60.0,
-                 max_retries: int = 2, http_client: Optional[httpx.AsyncClient] = None, space: str = ""):
+                 max_retries: int = 2, http_client: Optional[httpx.AsyncClient] = None,
+                 space: Union[str, int, None] = None):
         _, url, headers = _settings(api_key, base_url)
         self.max_retries = max(0, int(max_retries))
         self._http = http_client or httpx.AsyncClient(timeout=timeout)
-        self.space_id = (space or "").strip()
+        self.space_id = "" if space is None else _space_name(space, "space=")
         if self.space_id:
             headers = {**headers, "X-Geniffy-Space": self.space_id}
         self._url, self._headers = url, headers
@@ -362,10 +379,11 @@ class AsyncGeniffy:
         self.memories = AsyncMemories(self)
         self.sources = AsyncSources(self)
 
-    def space(self, space: str) -> "AsyncGeniffy":
-        """The same client, pointed at one of YOUR users. Shares this client's connection pool."""
+    def space(self, space: Union[str, int]) -> "AsyncGeniffy":
+        """The same client, pointed at one of YOUR users. Shares this client's connection pool. A blank
+        space (or None) is refused rather than read as your own memory."""
         return AsyncGeniffy(self._api_key, base_url=self._base_url, timeout=self._timeout,
-                            max_retries=self.max_retries, http_client=self._http, space=space)
+                            max_retries=self.max_retries, http_client=self._http, space=_space_name(space))
 
     async def _request(self, method: str, path: str, **kw: Any) -> Dict[str, Any]:
         for attempt in range(self.max_retries + 1):
@@ -429,9 +447,9 @@ class AsyncGeniffy:
         """Which of your users have memory, busiest first."""
         return list((await self._request("GET", "/v1/spaces")).get("spaces") or [])
 
-    async def forget_space(self, space: str) -> Dict[str, Any]:
+    async def forget_space(self, space: Union[str, int]) -> Dict[str, Any]:
         """Everything one of your users ever said, gone. It cannot be undone."""
-        return await self._request("DELETE", f"/v1/spaces/{quote(str(space), safe='')}")
+        return await self._request("DELETE", f"/v1/spaces/{quote(_space_name(space, 'forget_space()'), safe='')}")
 
     async def close(self) -> None:
         await self._http.aclose()

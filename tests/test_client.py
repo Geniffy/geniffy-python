@@ -254,6 +254,42 @@ def test_two_bound_clients_do_not_share_a_space():
     assert seen == ["customer_1042", "customer_1043"]
 
 
+def test_a_blank_space_is_refused_never_read_as_your_own_memory():
+    """A blank space is what a missing user id looks like by the time it reaches space(): read as no
+    space, that user's words would land in your own memory, with every other user missing an id."""
+    sent = []
+    client = make(lambda request: sent.append(request) or httpx.Response(200, json={}))
+    for blank in ("", "   ", "	"):
+        with pytest.raises(ValueError, match="blank"):
+            client.space(blank)
+        with pytest.raises(ValueError, match="blank"):
+            client.forget_space(blank)
+        with pytest.raises(ValueError, match="blank"):
+            make(lambda request: httpx.Response(200, json={}), space=blank)
+    for wrong in (None, True, 3.5, ["customer_1042"]):
+        with pytest.raises(TypeError, match="string or an int id"):
+            client.space(wrong)
+        with pytest.raises(TypeError, match="string or an int id"):
+            client.forget_space(wrong)
+    assert sent == [], "nothing was asked of the API"
+
+    assert client.space(1042).space_id == "1042", "an int id is the same user as its digits"
+    assert client.space(" customer_1042 ").space_id == "customer_1042"
+    assert make(lambda request: httpx.Response(200, json={}), space=None).space_id == "",         "space=None, or none at all, is your own memory"
+
+
+def test_the_async_client_refuses_a_blank_space_too():
+    client = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={}))))
+    with pytest.raises(ValueError, match="blank"):
+        client.space("")
+    with pytest.raises(TypeError):
+        client.space(None)
+    with pytest.raises(ValueError, match="blank"):
+        asyncio.run(client.forget_space(" "))
+    assert client.space(1042).space_id == "1042"
+
+
 def test_listing_and_forgetting_one_of_your_users():
     rows = [{"space": "customer_1042", "sources": 3, "memories": 11, "last_added_at": "2026-10-04T06:00:00+00:00"}]
     seen = []
