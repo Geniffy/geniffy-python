@@ -107,13 +107,14 @@ class Key:
     starts_with: Optional[str] = None
     created_at: Optional[str] = None
     last_used_at: Optional[str] = None
+    expires_at: Optional[str] = None   # when it stops working by itself; None: when it is revoked
     raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_json(cls, d: Dict[str, Any]) -> "Key":
         return cls(id=int(d["id"]), name=str(d.get("name") or ""), space=str(d.get("space") or ""),
                    key=d.get("key"), starts_with=d.get("starts_with"), created_at=d.get("created_at"),
-                   last_used_at=d.get("last_used_at"), raw=d)
+                   last_used_at=d.get("last_used_at"), expires_at=d.get("expires_at"), raw=d)
 
 
 @dataclass

@@ -11,7 +11,8 @@
   for every one of your users; on `client.space(id)`, for that user only. `list()` and `delete(id)` too.
 - `keys` on a client bound to one of your users: `client.space(id).keys.create(name=..., rpm=...)` makes a key
   limited to that user (it reads and writes their memory and nothing else), and `keys.list()` and
-  `keys.revoke(id)` manage them. Needs the API with `/v1/keys` (October 2026).
+  `keys.revoke(id)` manage them. `expires_at=` makes one that stops by itself. Needs the API with `/v1/keys`
+  (October 2026).
 - `space()`, `forget_space()` and `space=` refuse a blank space (`ValueError`) and anything that isn't a
   string or an int (`TypeError`). A blank space used to mean your own memory, so a user with a missing id
   landed in it. Your own memory is still the client with no space. An int id is taken as its digits.

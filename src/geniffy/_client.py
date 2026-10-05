@@ -351,12 +351,15 @@ class Memories:
         self._c._request("DELETE", f"/v1/memories/{int(memory_id)}")
 
 
-def _key_body(name: Optional[str], rpm: Optional[int]) -> Dict[str, Any]:
+def _key_body(name: Optional[str], rpm: Optional[int], expires_at: SaidAt = None) -> Dict[str, Any]:
     body: Dict[str, Any] = {}
     if name:
         body["name"] = name
     if rpm is not None:
         body["rpm"] = int(rpm)
+    if expires_at is not None:
+        # a datetime with no time zone is read as UTC; a date means the key works through that day
+        body["expires_at"] = expires_at.isoformat() if isinstance(expires_at, (datetime, date)) else str(expires_at)
     return body
 
 
@@ -367,10 +370,11 @@ class Keys:
     def __init__(self, client: Geniffy):
         self._c = client
 
-    def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None) -> Key:
+    def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None, expires_at: SaidAt = None) -> Key:
         """A new key limited to this client's user. `.key` is shown once; keep it where their app can read it.
-        rpm: requests a minute it may make (up to 600, the default)."""
-        return Key.from_json(self._c._request("POST", "/v1/keys", json=_key_body(name, rpm)))
+        rpm: requests a minute it may make (up to 600, the default). expires_at: when it stops working by itself
+        (a datetime, or a date it works through); left out, it works until revoked."""
+        return Key.from_json(self._c._request("POST", "/v1/keys", json=_key_body(name, rpm, expires_at)))
 
     def list(self) -> List[Key]:
         """The keys limited to this client's user that still work."""
@@ -426,8 +430,9 @@ class AsyncKeys:
     def __init__(self, client: AsyncGeniffy):
         self._c = client
 
-    async def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None) -> Key:
-        return Key.from_json(await self._c._request("POST", "/v1/keys", json=_key_body(name, rpm)))
+    async def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None,
+                     expires_at: SaidAt = None) -> Key:
+        return Key.from_json(await self._c._request("POST", "/v1/keys", json=_key_body(name, rpm, expires_at)))
 
     async def list(self) -> List[Key]:
         return [Key.from_json(k) for k in (await self._c._request("GET", "/v1/keys")).get("keys") or []]

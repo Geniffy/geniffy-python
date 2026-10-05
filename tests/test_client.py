@@ -153,6 +153,9 @@ def test_a_key_limited_to_one_user_is_made_listed_and_revoked_on_that_users_clie
     key = mem.keys.create(name="Asha's phone", rpm=60)
     assert (key.id, key.space, key.key) == (21, "customer_42", "gnf_live_" + "l" * 43)
     assert sent[-1][:3] == ("POST", "/v1/keys", "customer_42") and json.loads(sent[-1][3]) == {"name": "Asha's phone", "rpm": 60}
+    from datetime import date
+    mem.keys.create(name="A week", expires_at=date(2026, 10, 13))
+    assert json.loads(sent[-1][3]) == {"name": "A week", "expires_at": "2026-10-13"}
     listed = mem.keys.list()
     assert [(k.id, k.key, k.starts_with) for k in listed] == [(21, None, "gnf_live_ll")]
     mem.keys.revoke(21)
