@@ -9,9 +9,9 @@
 from ._client import DEFAULT_BASE_URL, AsyncGeniffy, Geniffy, __version__
 from ._errors import (APIConnectionError, AuthenticationError, BadRequestError, GeniffyError, InternalServerError,
                       NotFoundError, RateLimitError, UnreadableError)
-from ._types import Answer, Memory, MemoryDetail, MemoryPage, Source, SourcePage, SourceRef
+from ._types import Answer, Key, Memory, MemoryDetail, MemoryPage, Source, SourcePage, SourceRef
 
 __all__ = ["Geniffy", "AsyncGeniffy", "DEFAULT_BASE_URL", "__version__",
-           "Answer", "Memory", "MemoryDetail", "MemoryPage", "Source", "SourcePage", "SourceRef",
+           "Answer", "Key", "Memory", "MemoryDetail", "MemoryPage", "Source", "SourcePage", "SourceRef",
            "GeniffyError", "APIConnectionError", "AuthenticationError", "BadRequestError", "UnreadableError",
            "NotFoundError", "RateLimitError", "InternalServerError"]

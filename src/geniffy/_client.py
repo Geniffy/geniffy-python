@@ -22,7 +22,7 @@ from urllib.parse import quote
 import httpx
 
 from ._errors import APIConnectionError, GeniffyError, NotFoundError, from_response
-from ._types import Answer, Kind, Memory, MemoryDetail, MemoryPage, Source, SourcePage
+from ._types import Answer, Key, Kind, Memory, MemoryDetail, MemoryPage, Source, SourcePage
 
 __version__ = "0.1.1"
 DEFAULT_BASE_URL = "https://api.geniffy.com"
@@ -194,6 +194,7 @@ class Geniffy:
         self._api_key, self._base_url, self._timeout = api_key, base_url, timeout
         self.memories = Memories(self)
         self.sources = Sources(self)
+        self.keys = Keys(self)
 
     def space(self, space: Union[str, int]) -> "Geniffy":
         """The same client, pointed at one of YOUR users. It shares this client's connection pool,
@@ -349,6 +350,50 @@ class Memories:
         self._c._request("DELETE", f"/v1/memories/{int(memory_id)}")
 
 
+def _key_body(name: Optional[str], rpm: Optional[int]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {}
+    if name:
+        body["name"] = name
+    if rpm is not None:
+        body["rpm"] = int(rpm)
+    return body
+
+
+class Keys:
+    """Keys limited to one of your users, on a client bound to that user: client.space(user_id).keys. Such a key
+    reads and writes that user's memory and nothing else, so it is safe to hand to their own app or device."""
+
+    def __init__(self, client: Geniffy):
+        self._c = client
+
+    def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None) -> Key:
+        """A new key limited to this client's user. `.key` is shown once; keep it where their app can read it.
+        rpm: requests a minute it may make (up to 600, the default)."""
+        return Key.from_json(self._c._request("POST", "/v1/keys", json=_key_body(name, rpm)))
+
+    def list(self) -> List[Key]:
+        """The keys limited to this client's user that still work."""
+        return [Key.from_json(k) for k in self._c._request("GET", "/v1/keys").get("keys") or []]
+
+    def revoke(self, key_id: int) -> None:
+        """One of this user's keys stops at once."""
+        self._c._request("DELETE", f"/v1/keys/{int(key_id)}")
+
+
+class AsyncKeys:
+    def __init__(self, client: AsyncGeniffy):
+        self._c = client
+
+    async def create(self, *, name: Optional[str] = None, rpm: Optional[int] = None) -> Key:
+        return Key.from_json(await self._c._request("POST", "/v1/keys", json=_key_body(name, rpm)))
+
+    async def list(self) -> List[Key]:
+        return [Key.from_json(k) for k in (await self._c._request("GET", "/v1/keys")).get("keys") or []]
+
+    async def revoke(self, key_id: int) -> None:
+        await self._c._request("DELETE", f"/v1/keys/{int(key_id)}")
+
+
 class Sources:
     def __init__(self, client: Geniffy):
         self._c = client
@@ -407,6 +452,7 @@ class AsyncGeniffy:
         self._api_key, self._base_url, self._timeout = api_key, base_url, timeout
         self.memories = AsyncMemories(self)
         self.sources = AsyncSources(self)
+        self.keys = AsyncKeys(self)
 
     def space(self, space: Union[str, int]) -> "AsyncGeniffy":
         """The same client, pointed at one of YOUR users. Shares this client's connection pool. A blank

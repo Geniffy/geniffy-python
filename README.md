@@ -58,6 +58,13 @@ client.spaces()                          # which spaces hold anything, most rece
 client.forget_space("user_8841")         # everything held for that user, gone, when they ask
 ```
 
+To let a user's own app or device reach their memory, and nothing else, give it a key limited to them:
+
+```python
+key = client.space(f"user_{user.id}").keys.create(name="Asha's phone")   # key.key is shown once
+client.space(f"user_{user.id}").keys.revoke(key.id)
+```
+
 ## Add
 
 ```python

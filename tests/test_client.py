@@ -136,6 +136,38 @@ def test_your_own_id_goes_with_every_add_and_finds_and_deletes_the_source():
     asyncio.run(main())
 
 
+def test_a_key_limited_to_one_user_is_made_listed_and_revoked_on_that_users_client():
+    sent = []
+    made = {"id": 21, "name": "Asha's phone", "space": "customer_42", "key": "gnf_live_" + "l" * 43,
+            "note": "Shown once."}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, r.headers.get("x-geniffy-space"), r.content))
+        if r.method == "POST":
+            return httpx.Response(201, json=made)
+        if r.method == "GET":
+            return httpx.Response(200, json={"keys": [dict(made, key=None, starts_with="gnf_live_ll")]})
+        return httpx.Response(200, json={"id": 21, "space": "customer_42", "revoked": True})
+
+    mem = make(handler).space("customer_42")
+    key = mem.keys.create(name="Asha's phone", rpm=60)
+    assert (key.id, key.space, key.key) == (21, "customer_42", "gnf_live_" + "l" * 43)
+    assert sent[-1][:3] == ("POST", "/v1/keys", "customer_42") and json.loads(sent[-1][3]) == {"name": "Asha's phone", "rpm": 60}
+    listed = mem.keys.list()
+    assert [(k.id, k.key, k.starts_with) for k in listed] == [(21, None, "gnf_live_ll")]
+    mem.keys.revoke(21)
+    assert sent[-1][:3] == ("DELETE", "/v1/keys/21", "customer_42")
+
+    a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))).space("customer_42")
+
+    async def main():
+        assert (await a.keys.create()).space == "customer_42"
+        assert json.loads(sent[-1][3]) == {}
+        assert len(await a.keys.list()) == 1
+        await a.keys.revoke(21)
+    asyncio.run(main())
+
+
 def test_listing_pages_through_every_memory_and_opening_one():
     def handler(r):
         if r.url.path == "/v1/memories":

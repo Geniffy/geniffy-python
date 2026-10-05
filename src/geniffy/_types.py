@@ -98,6 +98,25 @@ class Source:
 
 
 @dataclass
+class Key:
+    """A key limited to one of your users: it reads and writes their memory and nothing else."""
+    id: int
+    name: str
+    space: str                         # the user it is limited to
+    key: Optional[str] = None          # the key itself: only when it is made, never again
+    starts_with: Optional[str] = None
+    created_at: Optional[str] = None
+    last_used_at: Optional[str] = None
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_json(cls, d: Dict[str, Any]) -> "Key":
+        return cls(id=int(d["id"]), name=str(d.get("name") or ""), space=str(d.get("space") or ""),
+                   key=d.get("key"), starts_with=d.get("starts_with"), created_at=d.get("created_at"),
+                   last_used_at=d.get("last_used_at"), raw=d)
+
+
+@dataclass
 class SourcePage:
     sources: List[Source]
     total: int
