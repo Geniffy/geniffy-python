@@ -8,8 +8,8 @@ import httpx
 import pytest
 
 import geniffy
-from geniffy import (AsyncGeniffy, AuthenticationError, Geniffy, GeniffyError, InternalServerError, NotFoundError,
-                     UnreadableError)
+from geniffy import (AsyncGeniffy, AuthenticationError, BadRequestError, Geniffy, GeniffyError, InternalServerError,
+                     NotFoundError, UnreadableError)
 
 KEY = "gnf_live_" + "k" * 43
 SOURCE = {"id": "a" * 32, "kind": "note", "title": "Priya Nair signs the Lumen renewal.", "status": "reading"}
@@ -718,3 +718,121 @@ def test_a_memory_names_its_sources_labels():
     m = geniffy.Memory.from_json(dict(MEM, source=dict(MEM["source"], labels={"channel": "email"})))
     assert m.source is not None and m.source.labels == {"channel": "email"}
     assert geniffy.Memory.from_json(MEM).source.labels == {}, "a source with none, or an API from before labels"
+
+
+# ── files: kept exactly, and learned like notes ───────────────────────────────
+FILE = {"path": "/memories/notes.md", "size": 22, "updated_at": "2026-10-06T09:00:00+00:00", "created": True,
+        "source": {"id": "f" * 32, "kind": "note", "title": "/memories/notes.md", "labels": {"channel": "claude-memory"}}}
+EXACT = "  Tea, not coffee.\r\n\n\t"
+
+
+def files_api(sent, left):
+    """A fake /v1/files: put, get, list, move, delete one and delete by prefix (100 a call, then `more`)."""
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append((r.method, r.url.path, r.url.params.multi_items(), r.content, r.headers.get("x-geniffy-space")))
+        if r.method == "PUT":
+            return httpx.Response(200, json=FILE)
+        if r.method == "GET" and "path" in r.url.params:
+            return httpx.Response(200, json={"path": "/memories/notes.md", "text": EXACT, "size": len(EXACT),
+                                             "updated_at": FILE["updated_at"]})
+        if r.method == "GET":
+            return httpx.Response(200, json={"files": [{"path": "/memories/a.md", "size": 3,
+                                                        "updated_at": FILE["updated_at"]}], "total": 2, "next": 1})
+        if r.method == "POST":
+            return httpx.Response(200, json={"moved": 2})
+        if "prefix" in r.url.params:
+            took = min(100, left["n"])
+            left["n"] -= took
+            return httpx.Response(200, json={"deleted": took, "more": left["n"] > 0})
+        return httpx.Response(200, json={"deleted": 1, "path": "/memories/notes.md"})
+    return handler
+
+
+def test_a_file_is_put_read_listed_moved_and_deleted_by_path():
+    """put sends the text exactly as given; get and delete name the file by its path; list pages through a prefix;
+    move sends from and to; delete_prefix asks again while the API says there are more."""
+    sent, left = [], {"n": 150}
+    mem = make(files_api(sent, left)).space("customer_1042")
+    info = mem.files.put("/memories/notes.md", EXACT, labels={"channel": "claude-memory"})
+    assert isinstance(info, geniffy.FileInfo) and info.created and info.size == 22
+    assert info.source is not None and info.source.labels == {"channel": "claude-memory"}
+    assert sent[-1][:2] == ("PUT", "/v1/files")
+    assert json.loads(sent[-1][3]) == {"path": "/memories/notes.md", "text": EXACT, "labels": {"channel": "claude-memory"}}
+    mem.files.put("/memories/empty.md", "")
+    assert json.loads(sent[-1][3]) == {"path": "/memories/empty.md", "text": ""}, "an empty file is a file; no labels, no field"
+
+    got = mem.files.get("/memories/notes.md")
+    assert isinstance(got, geniffy.File) and got.text == EXACT and got.size == len(EXACT)
+    assert sent[-1][:3] == ("GET", "/v1/files", [("path", "/memories/notes.md")])
+    page = mem.files.list("/memories/", limit=1)
+    assert isinstance(page, geniffy.FilePage) and [f.path for f in page.files] == ["/memories/a.md"]
+    assert (page.total, page.next, page.files[0].size, page.files[0].source) == (2, 1, 3, None)
+    assert sent[-1][2] == [("prefix", "/memories/"), ("limit", "1"), ("cursor", "0")]
+    mem.files.list()
+    assert sent[-1][2] == [("prefix", "/"), ("limit", "100"), ("cursor", "0")], "every file, by default"
+
+    assert mem.files.move("/memories/drafts", "/memories/final") == 2
+    assert sent[-1][:2] == ("POST", "/v1/files/move")
+    assert json.loads(sent[-1][3]) == {"from": "/memories/drafts", "to": "/memories/final"}
+    assert mem.files.delete("/memories/notes.md") is None
+    assert sent[-1][:3] == ("DELETE", "/v1/files", [("path", "/memories/notes.md")])
+    assert mem.files.delete_prefix("/memories/") == 150
+    assert [q for _, _, q, _, _ in sent[-2:]] == [[("prefix", "/memories/")]] * 2
+    assert {s for *_, s in sent} == {"customer_1042"}, "every files call stays in the user's space"
+
+
+def test_the_async_client_has_every_files_call():
+    sent, left = [], {"n": 101}
+
+    async def run():
+        a = AsyncGeniffy(api_key=KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(files_api(sent, left))))
+        mem = a.space("customer_1042")
+        assert (await mem.files.put("/memories/notes.md", EXACT, labels={"a": "b"})).created
+        assert json.loads(sent[-1][3]) == {"path": "/memories/notes.md", "text": EXACT, "labels": {"a": "b"}}
+        assert (await mem.files.get("/memories/notes.md")).text == EXACT
+        assert (await mem.files.list("/memories/", limit=5, cursor=10)).next == 1
+        assert sent[-1][2] == [("prefix", "/memories/"), ("limit", "5"), ("cursor", "10")]
+        assert await mem.files.move("/memories/a.md", "/memories/b.md") == 2
+        await mem.files.delete("/memories/notes.md")
+        assert sent[-1][:3] == ("DELETE", "/v1/files", [("path", "/memories/notes.md")])
+        assert await mem.files.delete_prefix("/memories/") == 101
+        await a.close()
+    asyncio.run(run())
+    assert {s for *_, s in sent} == {"customer_1042"}
+
+
+def test_a_missing_file_is_not_found_and_a_taken_destination_is_a_conflict():
+    def handler(r: httpx.Request) -> httpx.Response:
+        if r.method == "POST":
+            return httpx.Response(409, json={"error": {"code": "conflict",
+                                                       "message": "Something is already at /memories/b.md."}})
+        return httpx.Response(404, json={"error": {"code": "not_found", "message": "No file has that path."}})
+
+    g = make(handler)
+    with pytest.raises(NotFoundError, match="No file has that path"):
+        g.files.get("/memories/nope.md")
+    with pytest.raises(NotFoundError):
+        g.files.delete("/memories/nope.md")
+    with pytest.raises(BadRequestError) as e:
+        g.files.move("/memories/a.md", "/memories/b.md")
+    assert (e.value.status, e.value.code) == (409, "conflict")
+
+
+def test_putting_a_file_is_retried_but_a_move_is_not_sent_twice():
+    """The same text put again changes nothing, so a put is safe to send again; a move is not."""
+    calls = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        calls.append(r.method)
+        if r.method == "PUT" and calls.count("PUT") == 1:
+            return httpx.Response(503, json={"error": {"code": "memory_unavailable", "message": "busy"}})
+        if r.method == "POST":
+            return httpx.Response(502, json={"error": {"code": "memory_unavailable", "message": "busy"}})
+        return httpx.Response(200, json=FILE)
+
+    g = make(handler)
+    assert g.files.put("/memories/notes.md", "x").path == "/memories/notes.md" and calls == ["PUT", "PUT"]
+    with pytest.raises(InternalServerError):
+        g.files.move("/memories/a.md", "/memories/b.md")
+    assert calls.count("POST") == 1
+

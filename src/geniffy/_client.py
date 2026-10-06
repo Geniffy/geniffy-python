@@ -5,8 +5,9 @@
     g.memories.add("Priya Nair signs the Lumen renewal, and it comes up in March.")
     print(g.ask("Who signs the Lumen renewal?").answer)
 
-Retries: reads and deletes are retried on network errors, 408, 429 and 5xx; adding is retried only when
-the request never reached Geniffy (a failed connection) or on 429, so a retry never saves a note twice.
+Retries: reads, deletes and putting a file (the same text again changes nothing) are retried on network errors,
+408, 429 and 5xx; adding and moving are retried only when the request never reached Geniffy (a failed
+connection) or on 429, so a retry never saves a note twice.
 """
 from __future__ import annotations
 
@@ -24,7 +25,8 @@ from urllib.parse import quote
 import httpx
 
 from ._errors import APIConnectionError, GeniffyError, NotFoundError, from_response
-from ._types import Answer, Key, Kind, Memory, MemoryDetail, MemoryPage, Source, SourcePage
+from ._types import (Answer, File, FileInfo, FilePage, Key, Kind, Memory, MemoryDetail, MemoryPage, Source,
+                     SourcePage)
 
 __version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://api.geniffy.com"
@@ -234,6 +236,7 @@ class Geniffy:
         self._api_key, self._base_url, self._timeout, self._integration = api_key, base_url, timeout, integration
         self.memories = Memories(self)
         self.sources = Sources(self)
+        self.files = Files(self)
         self.keys = Keys(self)
         self.sections = Sections(self)
 
@@ -511,8 +514,8 @@ def _need_labels(labels: Optional[LabelFilter]) -> None:
         raise ValueError("Name the labels whose sources to delete, such as {\"channel\": \"gmail\"}.")
 
 
-# Each call deletes up to 100 sources and says whether more carry the labels; this many calls is the most one
-# delete_labelled() makes, so a filter that somehow keeps matching cannot loop for ever.
+# Each call deletes up to 100 sources (or files) and says whether there are more; this many calls is the most one
+# delete_labelled() or files.delete_prefix() makes, so a filter that somehow keeps matching cannot loop for ever.
 _LABELLED_CALLS = 1000
 
 
@@ -588,6 +591,60 @@ class Sources:
                 time.sleep(min(interval, deadline - now))
 
 
+def _file_body(path: str, text: str, labels: Optional[Labels]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"path": path, "text": text}
+    if labels is not None:
+        body["labels"] = dict(labels)
+    return body
+
+
+class Files:
+    """Files kept exactly as they were written, each under a path such as /memories/notes.md: what an agent keeps
+    for itself, like the notes Claude's memory tool writes (see geniffy.claude). Geniffy also learns from each file
+    like a note, so context() and ask() recall what it says, and deleting it takes back what only it taught."""
+
+    def __init__(self, client: Geniffy):
+        self._c = client
+
+    def put(self, path: str, text: str, *, labels: Optional[Labels] = None) -> FileInfo:
+        """Create a file, or replace its text. The text is kept exactly as sent, whitespace and line endings
+        included, and learned like a note titled by its path; a replace learns only what changed. An empty file
+        is kept too, with nothing learned from it. labels: as on memories.add."""
+        return FileInfo.from_json(self._c._request("PUT", "/v1/files", json=_file_body(path, text, labels)))
+
+    def get(self, path: str) -> File:
+        """A file and its exact text (NotFoundError if no file has that path)."""
+        return File.from_json(self._c._request("GET", "/v1/files", params={"path": path}))
+
+    def list(self, prefix: str = "/", *, limit: int = 100, cursor: int = 0) -> FilePage:
+        """The files whose paths start with prefix, by path, without their text ("/" for all of them). Up to 200
+        a page; .next is the cursor of the page after, None at the end."""
+        params = {"prefix": prefix, "limit": limit, "cursor": cursor}
+        return FilePage.from_json(self._c._request("GET", "/v1/files", params=params))
+
+    def delete(self, path: str) -> None:
+        """Delete a file, its text and what only it taught (NotFoundError if no file has that path)."""
+        self._c._request("DELETE", "/v1/files", params={"path": path})
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every file whose path starts with prefix ("/memories/" for everything in that folder), with
+        what only they taught. Returns how many."""
+        total = 0
+        for _ in range(_LABELLED_CALLS):
+            out = self._c._request("DELETE", "/v1/files", params={"prefix": prefix})
+            total += int(out.get("deleted") or 0)
+            if not out.get("more"):
+                break
+        return total
+
+    def move(self, from_path: str, to_path: str) -> int:
+        """Move a file, or, when from_path is a folder, every file in it, keeping the text and what was learned.
+        NotFoundError when there is nothing to move; BadRequestError with code "conflict" when a destination is
+        already taken, and then nothing moves. Returns how many files moved."""
+        out = self._c._request("POST", "/v1/files/move", json={"from": from_path, "to": to_path})
+        return int(out.get("moved") or 0)
+
+
 # ── asyncio ───────────────────────────────────────────────────────────────────
 class AsyncGeniffy:
     """The same client for asyncio: every method is awaited."""
@@ -605,6 +662,7 @@ class AsyncGeniffy:
         self._api_key, self._base_url, self._timeout, self._integration = api_key, base_url, timeout, integration
         self.memories = AsyncMemories(self)
         self.sources = AsyncSources(self)
+        self.files = AsyncFiles(self)
         self.keys = AsyncKeys(self)
         self.sections = AsyncSections(self)
 
@@ -797,3 +855,34 @@ class AsyncSources:
                 return src
             if now - asked < 1.0:
                 await asyncio.sleep(min(interval, deadline - now))
+
+
+class AsyncFiles:
+    def __init__(self, client: AsyncGeniffy):
+        self._c = client
+
+    async def put(self, path: str, text: str, *, labels: Optional[Labels] = None) -> FileInfo:
+        return FileInfo.from_json(await self._c._request("PUT", "/v1/files", json=_file_body(path, text, labels)))
+
+    async def get(self, path: str) -> File:
+        return File.from_json(await self._c._request("GET", "/v1/files", params={"path": path}))
+
+    async def list(self, prefix: str = "/", *, limit: int = 100, cursor: int = 0) -> FilePage:
+        params = {"prefix": prefix, "limit": limit, "cursor": cursor}
+        return FilePage.from_json(await self._c._request("GET", "/v1/files", params=params))
+
+    async def delete(self, path: str) -> None:
+        await self._c._request("DELETE", "/v1/files", params={"path": path})
+
+    async def delete_prefix(self, prefix: str) -> int:
+        total = 0
+        for _ in range(_LABELLED_CALLS):
+            out = await self._c._request("DELETE", "/v1/files", params={"prefix": prefix})
+            total += int(out.get("deleted") or 0)
+            if not out.get("more"):
+                break
+        return total
+
+    async def move(self, from_path: str, to_path: str) -> int:
+        out = await self._c._request("POST", "/v1/files/move", json={"from": from_path, "to": to_path})
+        return int(out.get("moved") or 0)

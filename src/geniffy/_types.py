@@ -134,6 +134,51 @@ class SourcePage:
 
 
 @dataclass
+class FileInfo:
+    """A file held under a path, without its text: how long it is, when it last changed and, from put(), whether
+    the path was new and the source Geniffy learns it from."""
+    path: str
+    size: int                          # characters of text
+    updated_at: Optional[str] = None
+    created: bool = False              # put(): True when nothing was held at the path before
+    source: Optional[SourceRef] = None  # put(): the source Geniffy learns it as, a note titled by the path
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_json(cls, d: Dict[str, Any]) -> "FileInfo":
+        return cls(path=str(d.get("path") or ""), size=int(d.get("size") or 0), updated_at=d.get("updated_at"),
+                   created=bool(d.get("created")), source=SourceRef.from_json(d.get("source")), raw=d)
+
+
+@dataclass
+class File:
+    """A file and its text, exactly as it was put."""
+    path: str
+    text: str
+    size: int                          # characters of text
+    updated_at: Optional[str] = None
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_json(cls, d: Dict[str, Any]) -> "File":
+        text = d.get("text")
+        return cls(path=str(d.get("path") or ""), text="" if text is None else str(text),
+                   size=int(d.get("size") or 0), updated_at=d.get("updated_at"), raw=d)
+
+
+@dataclass
+class FilePage:
+    files: List[FileInfo]              # sorted by path
+    total: int
+    next: Optional[int] = None
+
+    @classmethod
+    def from_json(cls, d: Dict[str, Any]) -> "FilePage":
+        return cls(files=[FileInfo.from_json(f) for f in d.get("files") or []], total=int(d.get("total") or 0),
+                   next=d.get("next"))
+
+
+@dataclass
 class Answer:
     """The answer, from your memory only. `answer` is None when nothing you added supports one; `message`
     then says so."""
