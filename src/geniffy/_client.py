@@ -316,7 +316,8 @@ User: {question}"
 
     def export(self) -> Dict[str, Any]:
         """Everything held, as the user's own copy: every memory, current or not, with its status and the
-        sentence it came from, and every source. On client.space(id), for a user who asks what you hold."""
+        sentence it came from, every source, and every file by its path ("files"; files.get(path) reads each
+        one's text). On client.space(id), for a user who asks what you hold."""
         return self._request("GET", "/v1/export")
 
     def me(self) -> Dict[str, Any]:

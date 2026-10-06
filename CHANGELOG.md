@@ -7,8 +7,9 @@
   character, spaces and line endings included. Geniffy also learns from each file like a note, so `context()` and
   `ask()` recall what it says; a replace learns only what changed. `files.list(prefix)` lists them by path,
   `files.move(from_path, to_path)` moves a file or every file in a folder without learning anything again, and
-  `files.delete(path)` and `files.delete_prefix(prefix)` delete them, with what only they taught. On `AsyncGeniffy`
-  too. Needs the API with `/v1/files` (October 2026).
+  `files.delete(path)` and `files.delete_prefix(prefix)` delete them, with what only they taught. `export()` lists
+  every file by path under `"files"`, without its text: `files.get(path)` reads each one. On `AsyncGeniffy` too.
+  Needs the API with `/v1/files` (October 2026).
 - `geniffy.claude.GeniffyMemoryTool`: Claude's memory tool (`memory_20250818`), stored in Geniffy. Pass it in
   `tools=` to Anthropic's `client.beta.messages.tool_runner`, on a client bound to one of your users, and their
   Claude keeps its notes as files in their memory under `/memories`, labelled `{"channel": "claude-memory"}`. Every
