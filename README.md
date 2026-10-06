@@ -120,6 +120,54 @@ mem.brief("Priya Nair")                  # what to read before talking to them
 mem.sources.list(); mem.sources.delete(source.id)   # a source, and what only it taught
 ```
 
+## Files, kept exactly
+
+Some things have to come back exactly as they were written, such as the notes an agent keeps for itself. A file
+is held under a path, character for character, and Geniffy also learns from it like a note, so `context()` and
+`ask()` recall what it says. Replacing a file learns only what changed; deleting one takes back what only it
+taught.
+
+```python
+mem.files.put("/notes/lumen.md", "Priya Nair signs the Lumen renewal.\n")   # creates or replaces
+mem.files.get("/notes/lumen.md").text                # exactly what was put
+mem.files.list("/notes/")                            # paths, sizes and times, by path
+mem.files.move("/notes", "/archive/notes")           # a file, or every file in a folder
+mem.files.delete("/archive/notes/lumen.md")
+mem.files.delete_prefix("/archive/")                 # every file under it
+```
+
+## Claude's memory tool
+
+Claude's [memory tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool) keeps notes as
+files under `/memories`. `GeniffyMemoryTool` keeps them in a Geniffy memory: each comes back exactly as Claude
+wrote it, and what it says is learned too, so `context()` and `ask()` recall it anywhere else in your app.
+
+```bash
+pip install "geniffy[claude]"
+```
+
+```python
+import anthropic
+from geniffy import Geniffy
+from geniffy.claude import GeniffyMemoryTool
+
+claude = anthropic.Anthropic()
+memory = GeniffyMemoryTool(Geniffy().space("customer_1042"))   # one of your users: their Claude, their notes
+
+runner = claude.beta.messages.tool_runner(
+    model="claude-opus-5-5",
+    max_tokens=16000,
+    tools=[memory],
+    messages=[{"role": "user", "content": "Remember that I prefer email follow-ups."}],
+)
+print(runner.until_done().content)
+```
+
+Claude's files are that user's files under `/memories`, labelled `{"channel": "claude-memory"}`:
+`mem.files.list("/memories/")` lists them, `mem.context(question, labels={"channel": "claude-memory"})` recalls only
+what Claude wrote, and `memory.clear_all_memory()` deletes them all. A path that could lead out of `/memories` is
+refused, typed or URL-encoded. With `AsyncAnthropic`, use `AsyncGeniffyMemoryTool(AsyncGeniffy().space(...))`.
+
 ## Async
 
 ```python
@@ -135,9 +183,10 @@ async with AsyncGeniffy() as client:
 
 Every error carries the API's own sentence: `AuthenticationError` (a wrong or revoked key),
 `NotFoundError`, `BadRequestError`, `UnreadableError`, `RateLimitError`, `InternalServerError`,
-`APIConnectionError`. Reads are retried twice on network errors, 408, 429 and 5xx. Adding is retried
-only when the request never reached Geniffy, or on 429, so a retry never saves a note twice. Set
-`max_retries=` and `timeout=` on the client to change that.
+`APIConnectionError`. Reads are retried twice on network errors, 408, 429 and 5xx, and so is putting a file,
+since the same text put again changes nothing. Adding and moving are retried only when the request never reached
+Geniffy, or on 429, so a retry never saves a note twice. Set `max_retries=` and `timeout=` on the client to change
+that.
 
 Every response carries an `X-Request-ID`, and every error carries it as `error.request_id`. Paste it into
 **Requests** in the Geniffy app to see that exact call: what was asked, what came back, and how long it took.
