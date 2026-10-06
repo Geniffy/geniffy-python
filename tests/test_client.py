@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 
 import httpx
 import pytest
@@ -836,3 +839,21 @@ def test_putting_a_file_is_retried_but_a_move_is_not_sent_twice():
         g.files.move("/memories/a.md", "/memories/b.md")
     assert calls.count("POST") == 1
 
+
+# ── geniffy.claude is optional ────────────────────────────────────────────────
+SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+
+
+def run_python(code: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONPATH": SRC + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+
+
+def test_importing_geniffy_does_not_import_anthropic():
+    done = run_python("import sys, geniffy\nassert 'anthropic' not in sys.modules, 'geniffy imported anthropic'")
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_memory_tool_without_anthropic_says_how_to_install_it():
+    done = run_python("import sys\nsys.modules['anthropic'] = None\nimport geniffy.claude")
+    assert done.returncode != 0 and 'pip install "geniffy[claude]"' in done.stderr, done.stderr

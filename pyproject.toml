@@ -11,7 +11,7 @@ requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Geniffy", email = "ops@geniffy.com" }]
-keywords = ["memory", "ai", "agents", "llm", "rag", "geniffy"]
+keywords = ["memory", "ai", "agents", "llm", "rag", "geniffy", "claude", "memory-tool"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -22,7 +22,9 @@ classifiers = [
 dependencies = ["httpx>=0.25,<1"]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+# Claude's memory tool, stored in Geniffy: geniffy.claude
+claude = ["anthropic>=1.0"]
+test = ["pytest>=7", "anthropic>=1.0; python_version >= '3.10'"]
 
 [project.urls]
 Homepage = "https://geniffy.com"

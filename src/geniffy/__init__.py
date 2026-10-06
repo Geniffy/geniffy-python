@@ -5,6 +5,8 @@
     g = Geniffy()                     # reads GENIFFY_API_KEY
     g.memories.add("Priya Nair signs the Lumen renewal, and it comes up in March.")
     print(g.ask("Who signs the Lumen renewal?").answer)
+
+Claude's memory tool, stored in Geniffy, is in geniffy.claude (pip install "geniffy[claude]").
 """
 from ._client import DEFAULT_BASE_URL, AsyncGeniffy, Geniffy, __version__
 from ._errors import (APIConnectionError, AuthenticationError, BadRequestError, GeniffyError, InternalServerError,
