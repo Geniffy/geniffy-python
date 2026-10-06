@@ -55,6 +55,7 @@ A space exists from the first time you write to it; there is nothing to create.
 mem = client.space(f"user_{user.id}")    # per request
 client.memories.add("...")               # no space: your own memory, the one the Geniffy app shows
 client.spaces()                          # which spaces hold anything, most recently written first
+client.space("user_8841").export()      # everything held for that user, as their own copy
 client.forget_space("user_8841")         # everything held for that user, gone, when they ask
 ```
 
@@ -74,6 +75,7 @@ for every user, or on `client.space(id)` for one.
 mem.memories.add("A note to remember", title="Call with Priya")
 mem.memories.add(url="https://example.com")              # a web page, read once
 mem.memories.add(messages=chat_history)                        # a conversation, as your framework holds it
+mem.memories.add("We moved the launch to March.", said_at="2026-09-12")   # said in the past: dated by when
 mem.memories.add_file("Pricing.pdf")                           # PDF, .docx, .pptx, .xlsx or text: a path, bytes or a file opened "rb"
 mem.memories.add_many([{"text": "..."}, {"url": "https://..."}])
 ```
@@ -97,7 +99,12 @@ mem.memories.add(email.body, title=email.subject, labels={"channel": "email", "a
 mem.context("When does the renewal come up?", labels={"account": "lumen"})
 mem.search("pricing", labels={"channel": ["email", "chat"]})
 mem.memories.list(labels={"account": "lumen"})
+mem.sources.delete_labelled({"channel": "email"})              # the user disconnected it: all it brought goes
+mem.sources.delete_labelled({"channel": "email"}, keep=seen)   # the end of a full sync: all but what is still there
 ```
+
+To keep a whole data source in step, such as a user's Gmail, Drive or Notion, see
+[Sync a data source](https://docs.geniffy.com/add-memories/sync-a-data-source).
 
 ## Read and correct
 
