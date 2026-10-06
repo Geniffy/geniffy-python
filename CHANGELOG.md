@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+- `files`: files kept exactly as they were written, each under a path such as `/memories/notes.md`.
+  `files.put(path, text)` creates or replaces one, and `files.get(path).text` is that text character for
+  character, spaces and line endings included. Geniffy also learns from each file like a note, so `context()` and
+  `ask()` recall what it says; a replace learns only what changed. `files.list(prefix)` lists them by path,
+  `files.move(from_path, to_path)` moves a file or every file in a folder without learning anything again, and
+  `files.delete(path)` and `files.delete_prefix(prefix)` delete them, with what only they taught. On `AsyncGeniffy`
+  too. Needs the API with `/v1/files` (October 2026).
+- `geniffy.claude.GeniffyMemoryTool`: Claude's memory tool (`memory_20250818`), stored in Geniffy. Pass it in
+  `tools=` to Anthropic's `client.beta.messages.tool_runner`, on a client bound to one of your users, and their
+  Claude keeps its notes as files in their memory under `/memories`, labelled `{"channel": "claude-memory"}`. Every
+  command answers in the words of Anthropic's memory tool documentation, and a path that could lead out of
+  `/memories` is refused, typed or URL-encoded. `AsyncGeniffyMemoryTool` does the same for `AsyncAnthropic`. Install
+  it with `pip install "geniffy[claude]"`; `import geniffy` still needs nothing but httpx.
+- Putting a file is retried like a read: the same text put again changes nothing.
+
 ## 0.2.0
 
 - `memories.add(..., said_at=...)`: when a note or conversation from the past was said (a datetime, a date or

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geniffy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Geniffy for Python: add notes, files and links to a memory, then search it and ask it."
 readme = "README.md"
 requires-python = ">=3.9"
