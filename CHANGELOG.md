@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0
+
+- Briefings. `briefing(project=, cue=)` is what a session opens with, written out for your prompt: where the
+  project stands (goal, focus, open items, decisions, next steps), what is due or was promised, the rules and
+  lessons that apply, what happened, then the memories, each dated. `briefing_full()` has its parts. `now()`,
+  `episodes()`, `lessons()` and `intentions()` read each part on its own, and `set_intention(id, "done")` marks a
+  promise kept. `memory_health()`: how well the memory answers about its own work, from the questions it asks
+  itself each night. On `AsyncGeniffy` too. Needs the API with briefings (October 2026).
+- `memories.add(messages=...)` takes a whole session: the assistant's tool calls and what came back go in too, in
+  the shapes OpenAI, Anthropic, the Vercel AI SDK, Gemini and LangChain hold them. Facts come only from what was
+  said; the tool turns tell Geniffy what happened. Secrets are removed before anything is kept.
+- Sessions saved as they go. `session(id).save(messages)`, after every turn, sends only the messages after the last
+  one it sent, 500 a call, into one memory for the whole session however long it gets; if the agent rewrites its
+  history, what it holds now is saved again rather than lost. `memories.add(messages=new_turns, session=id)` does
+  the same for turns you track yourself. Needs the API with sessions (October 2026).
+- `usage()`: this month's use for the whole account, what it comes to in dollars, what your plan includes, the
+  most the month can come to, and when it resets. `UsageLimitError` (402, code `allowance_used`): raised when this
+  month's use is up and what waits to be learned has reached its limit; search and recall keep working; not
+  retried. A source saved past this month's use comes back with `status` `"waiting"`, learned once there is room.
+
 ## 0.3.0
 
 - `files`: files kept exactly as they were written, each under a path such as `/memories/notes.md`.

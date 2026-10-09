@@ -48,6 +48,12 @@ class RateLimitError(GeniffyError):
     """Too many requests at once (429); retried automatically before this is raised."""
 
 
+class UsageLimitError(GeniffyError):
+    """This month's use is up (402, code allowance_used): past the plan, what waits to be learned has reached its
+    fair-use limit (ten months of the plan's learning). Search and recall keep working; saving resumes when the month
+    resets (client.usage() says when), at once with extra learning on, or on a bigger plan. Not retried."""
+
+
 class InternalServerError(GeniffyError):
     """Geniffy or the memory behind it did not answer (5xx); retried automatically before this is raised."""
 
@@ -64,6 +70,8 @@ def from_response(status: int, body: Dict[str, Any], request_id: Optional[str] =
         cls = UnreadableError
     elif status in (400, 409, 413, 422):
         cls = BadRequestError
+    elif status == 402:
+        cls = UsageLimitError
     elif status == 429:
         cls = RateLimitError
     elif status >= 500:

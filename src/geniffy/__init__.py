@@ -8,14 +8,14 @@
 
 Claude's memory tool, stored in Geniffy, is in geniffy.claude (pip install "geniffy[claude]").
 """
-from ._client import DEFAULT_BASE_URL, AsyncGeniffy, Geniffy, __version__
+from ._client import DEFAULT_BASE_URL, AsyncGeniffy, AsyncSession, Geniffy, Session, __version__
 from ._errors import (APIConnectionError, AuthenticationError, BadRequestError, GeniffyError, InternalServerError,
-                      NotFoundError, RateLimitError, UnreadableError)
+                      NotFoundError, RateLimitError, UnreadableError, UsageLimitError)
 from ._types import (Answer, File, FileInfo, FilePage, Key, Memory, MemoryDetail, MemoryPage, Source, SourcePage,
                      SourceRef)
 
-__all__ = ["Geniffy", "AsyncGeniffy", "DEFAULT_BASE_URL", "__version__",
+__all__ = ["Geniffy", "AsyncGeniffy", "Session", "AsyncSession", "DEFAULT_BASE_URL", "__version__",
            "Answer", "File", "FileInfo", "FilePage", "Key", "Memory", "MemoryDetail", "MemoryPage", "Source",
            "SourcePage", "SourceRef",
            "GeniffyError", "APIConnectionError", "AuthenticationError", "BadRequestError", "UnreadableError",
-           "NotFoundError", "RateLimitError", "InternalServerError"]
+           "NotFoundError", "RateLimitError", "UsageLimitError", "InternalServerError"]

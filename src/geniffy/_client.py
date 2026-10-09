@@ -12,6 +12,7 @@ connection) or on 429, so a retry never saves a note twice.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import mimetypes
 import os
@@ -28,7 +29,7 @@ from ._errors import APIConnectionError, GeniffyError, NotFoundError, from_respo
 from ._types import (Answer, File, FileInfo, FilePage, Key, Kind, Memory, MemoryDetail, MemoryPage, Source,
                      SourcePage)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 DEFAULT_BASE_URL = "https://api.geniffy.com"
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 FileInput = Union[str, "os.PathLike[str]", bytes, IO[bytes]]
@@ -130,8 +131,17 @@ SaidAt = Union[str, datetime, date, None]
 
 def _add_body(text: Optional[str], url: Optional[str], messages: Optional[List[Dict[str, Any]]],
               title: Optional[str], said_at: SaidAt, external_id: Optional[str] = None,
-              labels: Optional[Labels] = None) -> Dict[str, Any]:
+              labels: Optional[Labels] = None, session: Optional[str] = None) -> Dict[str, Any]:
+    if session is not None:   # the API says the same: refused here before anything is sent
+        if messages is None:
+            raise ValueError("session goes with messages: the turns of the session.")
+        if external_id is not None:
+            raise ValueError("Send session or external_id, not both: the session is the source's id.")
+        if said_at is not None:
+            raise ValueError("said_at does not go with session: each turn is dated as it arrives.")
     body = _note_or_link(text, url, title) if messages is None else {"messages": list(messages)}
+    if session is not None:
+        body["session"] = str(session)
     if external_id is not None:
         body["external_id"] = str(external_id)
     if labels is not None:
@@ -205,6 +215,20 @@ def _brief_params(subject: Optional[str], limit: int, labels: Optional[LabelFilt
     if subject:
         q["subject"] = subject
     return q
+
+
+def _briefing_body(project: Optional[str], cue: str, budget_chars: int) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"cue": cue or "", "budget_chars": int(budget_chars)}
+    if project:
+        body["project"] = project
+    return body
+
+
+def _project_params(project: Optional[str], **more: Any) -> Dict[str, Any]:
+    out = {k: v for k, v in more.items() if v is not None}
+    if project:
+        out["project"] = project
+    return out
 
 
 # ── blocking ──────────────────────────────────────────────────────────────────
@@ -314,6 +338,50 @@ User: {question}"
         """What the memory holds and what connects to what. Every line has a memory behind it."""
         return self._request("GET", "/v1/graph")
 
+    # ── what a session opens with: where things stand, what happened, what was learned and promised
+    def briefing(self, *, project: Optional[str] = None, cue: str = "", budget_chars: int = 6000) -> str:
+        """What this moment needs, written out for YOUR prompt within budget_chars: where the project stands (goal,
+        focus, open items, decisions, next steps), what is due or was promised, the rules and lessons that apply,
+        what happened (the latest and the most related to cue first), then the memories, each dated. Open a session
+        with it, and call it again when the task changes:
+
+            system = f"{mem.briefing(project='checkout', cue=user_message)}\n\n{instructions}"
+
+        project is the label your sources carry (a project, context, thread or repo label); leave it out for
+        every project. Read, not written by a model, so it is fast enough for every turn."""
+        return str(self.briefing_full(project=project, cue=cue, budget_chars=budget_chars)["briefing"])
+
+    def briefing_full(self, *, project: Optional[str] = None, cue: str = "", budget_chars: int = 6000) -> Dict[str, Any]:
+        """The same, with its parts: now, due, lessons, episodes and memories, each with its source."""
+        return self._request("POST", "/v1/briefing", json=_briefing_body(project, cue, budget_chars))
+
+    def now(self, project: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Where things stand, per project: goal, focus, what is open (and since when), decisions with their
+        reasons, next steps, blockers and what was finished."""
+        return list(self._request("GET", "/v1/now", params=_project_params(project)).get("now") or [])
+
+    def episodes(self, project: Optional[str] = None, *, limit: int = 20) -> List[Dict[str, Any]]:
+        """What happened, as stories, newest first: what happened, how it ended, what it led to, its source."""
+        return list(self._request("GET", "/v1/episodes", params=_project_params(project, limit=limit)).get("episodes") or [])
+
+    def lessons(self, project: Optional[str] = None, *, limit: int = 50) -> List[Dict[str, Any]]:
+        """Rules, how-tos and lessons, strongest first, each with when it applies and why."""
+        return list(self._request("GET", "/v1/lessons", params=_project_params(project, limit=limit)).get("lessons") or [])
+
+    def intentions(self, *, status: str = "open", limit: int = 50) -> List[Dict[str, Any]]:
+        """Promises and plans, yours and those made to you, with their triggers: open (the default), done or
+        dropped."""
+        return list(self._request("GET", "/v1/intentions", params={"status": status, "limit": limit}).get("intentions") or [])
+
+    def set_intention(self, intention_id: int, status: str = "done") -> Dict[str, Any]:
+        """Mark a promise or plan done, dropped, or open again."""
+        return dict(self._request("POST", f"/v1/intentions/{int(intention_id)}", json={"status": status})["intention"])
+
+    def memory_health(self) -> Dict[str, Any]:
+        """How well the memory answers about its own work: each night it writes questions from what it read, answers
+        them and marks the answers. `health` is the share right (0 to 1), with the questions; None before a night."""
+        return self._request("GET", "/v1/memory-health")
+
     def export(self) -> Dict[str, Any]:
         """Everything held, as the user's own copy: every memory, current or not, with its status and the
         sentence it came from, every source, and every file by its path ("files"; files.get(path) reads each
@@ -323,6 +391,24 @@ User: {question}"
     def me(self) -> Dict[str, Any]:
         """Whose key this is, and which space this client is reading."""
         return self._request("GET", "/v1/me")
+
+    def usage(self) -> Dict[str, Any]:
+        """This month's use, for the whole account, against the plan (free, pro or max): learned_tokens (tokens
+        learned from everything saved, your app's users included), included_tokens (what the plan learns in a
+        month), waiting_tokens (saved and searchable, waiting to be learned next month), answers and
+        included_answers, extra_on, extra_cap_usd and extra_used_usd (extra learning: $15 per million tokens and
+        $15 per 1,000 answers past the plan, up to the cap), trial (on the 14 days of Pro), state (ok, near, over,
+        extra or paused) and period_end (when it resets). Saving, briefings and search are free and never
+        counted."""
+        return self._request("GET", "/v1/usage")
+
+    def session(self, session_id: str, *, title: Optional[str] = None, labels: Optional[Labels] = None) -> "Session":
+        """An agent's or a chat's session, saved as it goes into one memory: hand save() the whole conversation
+        after each turn, and only the messages it has not sent yet go to Geniffy.
+
+            run = mem.session("run-42", title="Refund agent")
+            run.save(messages)   # after every turn"""
+        return Session(self, session_id, title, labels)
 
     def spaces(self) -> List[Dict[str, Any]]:
         """Which of your users have memory, busiest first."""
@@ -349,7 +435,8 @@ class Memories:
 
     def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
             messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
-            said_at: SaidAt = None, external_id: Optional[str] = None, labels: Optional[Labels] = None) -> Source:
+            said_at: SaidAt = None, external_id: Optional[str] = None, labels: Optional[Labels] = None,
+            session: Optional[str] = None) -> Source:
         """Add a note (text), a web page (url=...) that Geniffy reads once, or a conversation
         (messages=[{"role": ..., "content": ...}]) as your framework already holds it: content as a
         string, or as Anthropic's blocks or OpenAI's parts, or parts as Gemini holds them. Only text is
@@ -365,8 +452,12 @@ class Memories:
 
         labels: up to 20 of your own name/value pairs ({"channel": "email", "project": "apollo"}) to filter
         search, context, ask, list and brief by. Sent again under the same external_id they replace the old
-        ones, with nothing learned again; left out, they are kept; {} clears them."""
-        body = _add_body(text, url, messages, title, said_at, external_id, labels)
+        ones, with nothing learned again; left out, they are kept; {} clears them.
+
+        session: with messages, your id for an agent's or a chat's session saved as it goes. Each call adds its
+        messages to one memory for the whole session, however long it gets, so send only the turns that are new
+        since the last call; client.session(id).save(messages) works that out for you."""
+        body = _add_body(text, url, messages, title, said_at, external_id, labels, session)
         return Source.from_json(self._c._request("POST", "/v1/memories", json=body)["source"])
 
     def add_many(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -719,6 +810,37 @@ class AsyncGeniffy:
         """What stays true about someone, and what is going on with them now."""
         return await self._request("GET", "/v1/profile", params={"subject": subject} if subject else None)
 
+    async def briefing(self, *, project: Optional[str] = None, cue: str = "", budget_chars: int = 6000) -> str:
+        """What this moment needs, written out for your prompt (see Geniffy.briefing)."""
+        out = await self.briefing_full(project=project, cue=cue, budget_chars=budget_chars)
+        return str(out["briefing"])
+
+    async def briefing_full(self, *, project: Optional[str] = None, cue: str = "",
+                            budget_chars: int = 6000) -> Dict[str, Any]:
+        return await self._request("POST", "/v1/briefing", json=_briefing_body(project, cue, budget_chars))
+
+    async def now(self, project: Optional[str] = None) -> List[Dict[str, Any]]:
+        return list((await self._request("GET", "/v1/now", params=_project_params(project))).get("now") or [])
+
+    async def episodes(self, project: Optional[str] = None, *, limit: int = 20) -> List[Dict[str, Any]]:
+        out = await self._request("GET", "/v1/episodes", params=_project_params(project, limit=limit))
+        return list(out.get("episodes") or [])
+
+    async def lessons(self, project: Optional[str] = None, *, limit: int = 50) -> List[Dict[str, Any]]:
+        out = await self._request("GET", "/v1/lessons", params=_project_params(project, limit=limit))
+        return list(out.get("lessons") or [])
+
+    async def intentions(self, *, status: str = "open", limit: int = 50) -> List[Dict[str, Any]]:
+        out = await self._request("GET", "/v1/intentions", params={"status": status, "limit": limit})
+        return list(out.get("intentions") or [])
+
+    async def set_intention(self, intention_id: int, status: str = "done") -> Dict[str, Any]:
+        out = await self._request("POST", f"/v1/intentions/{int(intention_id)}", json={"status": status})
+        return dict(out["intention"])
+
+    async def memory_health(self) -> Dict[str, Any]:
+        return await self._request("GET", "/v1/memory-health")
+
     async def brief(self, subject: Optional[str] = None, *, limit: int = 60,
                     labels: Optional[LabelFilter] = None) -> Dict[str, Any]:
         """What to read before dealing with someone."""
@@ -734,6 +856,15 @@ class AsyncGeniffy:
 
     async def me(self) -> Dict[str, Any]:
         return await self._request("GET", "/v1/me")
+
+    async def usage(self) -> Dict[str, Any]:
+        """This month's use, for the whole account, as Geniffy.usage() returns it."""
+        return await self._request("GET", "/v1/usage")
+
+    def session(self, session_id: str, *, title: Optional[str] = None,
+                labels: Optional[Labels] = None) -> "AsyncSession":
+        """An agent's or a chat's session, saved as it goes, as Geniffy.session() does it."""
+        return AsyncSession(self, session_id, title, labels)
 
     async def spaces(self) -> List[Dict[str, Any]]:
         """Which of your users have memory, busiest first."""
@@ -760,8 +891,8 @@ class AsyncMemories:
     async def add(self, text: Optional[str] = None, *, url: Optional[str] = None,
                   messages: Optional[List[Dict[str, Any]]] = None, title: Optional[str] = None,
                   said_at: SaidAt = None, external_id: Optional[str] = None,
-                  labels: Optional[Labels] = None) -> Source:
-        body = _add_body(text, url, messages, title, said_at, external_id, labels)
+                  labels: Optional[Labels] = None, session: Optional[str] = None) -> Source:
+        body = _add_body(text, url, messages, title, said_at, external_id, labels, session)
         out = await self._c._request("POST", "/v1/memories", json=body)
         return Source.from_json(out["source"])
 
@@ -887,3 +1018,58 @@ class AsyncFiles:
     async def move(self, from_path: str, to_path: str) -> int:
         out = await self._c._request("POST", "/v1/files/move", json={"from": from_path, "to": to_path})
         return int(out.get("moved") or 0)
+
+
+# ── sessions saved as they go ─────────────────────────────────────────────────────────────────────────────
+_SESSION_CALL = 500   # the most messages one call takes
+
+
+def _message_key(message: Dict[str, Any]) -> str:
+    return hashlib.sha1(json.dumps(message, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _unsent(messages: List[Dict[str, Any]], last: Optional[str]) -> List[Dict[str, Any]]:
+    """The messages after the last one already sent. When that one is no longer there (the conversation was
+    rewritten or compacted), all of them: saving a turn twice is better than losing what changed."""
+    if last is not None:
+        for i in range(len(messages) - 1, -1, -1):
+            if _message_key(messages[i]) == last:
+                return messages[i + 1:]
+    return messages
+
+
+class Session:
+    """An agent's or a chat's session, saved as it goes into one memory for the whole session. Hand save() the
+    whole conversation after each turn: only the messages after the last one it sent go to Geniffy, at most 500 a
+    call, so a session of any length is never sent twice. Made by client.session(id)."""
+
+    def __init__(self, client: Geniffy, session_id: str, title: Optional[str] = None,
+                 labels: Optional[Labels] = None):
+        self._c, self.id, self.title, self.labels = client, str(session_id), title, labels
+        self._last: Optional[str] = None
+
+    def save(self, messages: Iterable[Dict[str, Any]]) -> Optional[Source]:
+        """Sends what is new; returns the session's source, or None when nothing was new."""
+        new, src = _unsent(list(messages), self._last), None
+        for i in range(0, len(new), _SESSION_CALL):
+            part = new[i:i + _SESSION_CALL]
+            src = self._c.memories.add(messages=part, session=self.id, title=self.title, labels=self.labels)
+            self._last = _message_key(part[-1])
+        return src
+
+
+class AsyncSession:
+    """Session, for AsyncGeniffy. Made by client.session(id)."""
+
+    def __init__(self, client: AsyncGeniffy, session_id: str, title: Optional[str] = None,
+                 labels: Optional[Labels] = None):
+        self._c, self.id, self.title, self.labels = client, str(session_id), title, labels
+        self._last: Optional[str] = None
+
+    async def save(self, messages: Iterable[Dict[str, Any]]) -> Optional[Source]:
+        new, src = _unsent(list(messages), self._last), None
+        for i in range(0, len(new), _SESSION_CALL):
+            part = new[i:i + _SESSION_CALL]
+            src = await self._c.memories.add(messages=part, session=self.id, title=self.title, labels=self.labels)
+            self._last = _message_key(part[-1])
+        return src

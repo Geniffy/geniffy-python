@@ -75,7 +75,7 @@ class Source:
     id: str
     kind: str                          # note, file or link
     title: str
-    status: str                        # reading, learned or failed
+    status: str                        # reading, learned, failed, or waiting: saved past this month's use, learned later
     error: Optional[str] = None        # why it failed, in plain words
     facts: Optional[int] = None
     url: Optional[str] = None
